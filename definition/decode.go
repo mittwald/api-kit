@@ -42,9 +42,7 @@ func (l *loader) document(root *apikit.Object) *Document {
 	}
 	doc.Filters = m.texts("filters")
 	doc.OrderFilters = m.texts("orderFilters")
-	if auth, ok := m.child("auth"); ok {
-		doc.Auth = auth.object
-	}
+	l.auth(m, doc)
 
 	// Resources come before the filter rules, which refer to them.
 	if resources, ok := m.child(keyResources); ok {

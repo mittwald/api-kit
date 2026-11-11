@@ -324,8 +324,8 @@ func TestLoadDecodesEveryKey(t *testing.T) {
 	if doc.Output.MaxCharacters != 40 || len(doc.Output.KeepWhole) != 1 || !slices.Equal(doc.Output.ColumnOrder, []string{"id", "code", "name"}) {
 		t.Errorf("Output = %+v", doc.Output)
 	}
-	if !doc.Auth.Has("header") {
-		t.Error("the auth section was not kept")
+	if got, want := doc.Auth.Header, (definition.AuthHeader{Name: "X-Token", Value: "${token}"}); got != want {
+		t.Errorf("Auth.Header = %+v, want %+v", got, want)
 	}
 
 	var names []string

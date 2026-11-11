@@ -25,6 +25,12 @@ func (l *loader) validate(doc *Document) {
 		if resource.API != "" {
 			l.knownAPI(join(path, "api"), doc, resource.API)
 		}
+		// A header is read from an item of a sub-resource of the resource.
+		for i, header := range resource.Headers {
+			if source, ok := doc.byName[header.Resource]; header.Resource != "" && (!ok || source.Parent != resource.Name) {
+				l.problemf(join(index(join(path, "headers"), i), "resource"), "%q is not a sub-resource of %q", header.Resource, resource.Name)
+			}
+		}
 		for i, condition := range resource.Conditions {
 			if _, err := expr.ParseCondition(condition); err != nil {
 				l.problemf(index(join(path, "conditions"), i), "must be a condition like enabled=false, not %q", condition)

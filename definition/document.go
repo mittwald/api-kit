@@ -58,8 +58,9 @@ type Document struct {
 	FilterIDs []FilterID
 	// Output tunes how results are shown.
 	Output Output
-	// Auth is the authentication section as written; package auth reads it.
-	Auth *apikit.Object
+	// Auth describes how requests are authenticated; package auth works
+	// from it.
+	Auth Auth
 
 	resources []*Resource
 	byName    map[string]*Resource

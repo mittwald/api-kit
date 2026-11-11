@@ -2,10 +2,11 @@
 // rest of api-kit works from.
 //
 // A definition is a YAML document. It names the environments of the API and
-// their base URLs, and describes its resources: where they live, which
-// columns to show, how they relate to each other, and the setters that
-// change them. A tool embeds its definition and loads it with [Load]; users
-// can extend it with overlays of the same shape.
+// their base URLs, says how requests are authenticated, and describes the
+// resources: where they live, which columns to show, how they relate to
+// each other, and the setters that change them. A tool embeds its
+// definition and loads it with [Load]; users can extend it with overlays of
+// the same shape.
 //
 //	environments:
 //	  production:
