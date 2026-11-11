@@ -1,0 +1,67 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint (${{ matrix.goos }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Platform-specific files are only analyzed for their own GOOS.
+        goos: [linux, darwin, windows]
+    env:
+      GOOS: ${{ matrix.goos }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.15.0
+      - name: go mod tidy
+        run: go mod tidy -diff
+
+  test:
+    name: Test (Go ${{ matrix.go }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        # The oldest supported release (go.mod) and the current one.
+        go: ["1.27.0", stable]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ matrix.go }}
+      - name: Build
+        run: go build ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -race ./...
+
+  cross:
+    name: Cross-compile
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, darwin, windows, freebsd]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - run: go build ./...
+        env:
+          GOOS: ${{ matrix.goos }}

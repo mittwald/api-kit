@@ -1,0 +1,22 @@
+name: Feature request
+description: Suggest an improvement to the definition schema, the engine or the generated commands
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What would you like api-kit to do?
+      description: Describe the API and the command-line tool you are building, not only the change you have in mind.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed API
+      description: Optional sketch of how you would call it.
+      render: go
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Workarounds you use today, or other libraries you looked at.

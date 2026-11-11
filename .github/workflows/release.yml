@@ -1,0 +1,40 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: GitHub release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - name: Test the tagged commit
+        run: go test ./...
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=""
+          case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes $prerelease
+      - name: Announce the version to the Go module proxy
+        # pkg.go.dev picks a version up once the proxy has fetched it.
+        run: |
+          url="https://proxy.golang.org/github.com/mittwald/api-kit/@v/${GITHUB_REF_NAME}.info"
+          for attempt in 1 2 3 4 5; do
+            if curl -fsS "$url"; then exit 0; fi
+            sleep $((attempt * 10))
+          done
+          echo "the module proxy did not serve $GITHUB_REF_NAME" >&2
+          exit 1

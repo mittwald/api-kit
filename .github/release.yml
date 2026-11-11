@@ -1,0 +1,20 @@
+# Categories for the release notes GitHub generates from merged pull requests.
+changelog:
+  exclude:
+    labels:
+      - ignore-for-release
+    authors:
+      - dependabot
+  categories:
+    - title: Breaking changes
+      labels:
+        - breaking-change
+    - title: Features
+      labels:
+        - enhancement
+    - title: Bug fixes
+      labels:
+        - bug
+    - title: Other changes
+      labels:
+        - "*"

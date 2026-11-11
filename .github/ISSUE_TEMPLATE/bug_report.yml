@@ -1,0 +1,69 @@
+name: Bug report
+description: Report unexpected behavior of a api-kit package
+type: "Bug"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report!
+
+        > [!IMPORTANT]
+        > Please redact secrets (tokens, passwords, internal URLs) from code and output before submitting.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before you start
+      options:
+        - label: I have searched the existing issues and did not find a report for this bug.
+          required: true
+        - label: I have reproduced this with the latest release.
+          required: false
+
+  - type: dropdown
+    id: packages
+    attributes:
+      label: Affected packages
+      multiple: true
+      options:
+        - apikit
+        - expr
+        - definition
+        - auth
+        - engine
+        - output
+        - cli
+        - apitest
+
+  - type: input
+    id: version
+    attributes:
+      label: api-kit version
+      placeholder: v0.1.0
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Go version, operating system and shell.
+      placeholder: go1.27.3, macOS 26, zsh
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: A minimal definition and program or test that shows the problem.
+      render: go
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
