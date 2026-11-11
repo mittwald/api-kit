@@ -3,6 +3,7 @@ module github.com/mittwald/api-kit
 go 1.27.0
 
 require (
+	github.com/goccy/go-yaml v1.19.2
 	github.com/mittwald/cli-kit v0.2.2
 	github.com/spf13/cobra v1.10.2
 )
