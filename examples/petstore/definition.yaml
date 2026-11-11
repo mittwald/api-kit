@@ -1,0 +1,62 @@
+# The definition of an invented API, a pet store on example.test. The whole
+# tool is generated from it: `petstore get pets`, `petstore rename pets ID
+# --name Rex`, and so on.
+environments:
+  production:
+    apis:
+      main: https://api.example.test/v1
+    linkBase: https://store.example.test
+
+auth:
+  header: {name: Authorization, value: "Bearer ${token}"}
+  sources:
+    - store
+    - {env: PETSTORE_TOKEN}
+
+identifiers:
+  native: "^[0-9a-f]{8}$"
+
+resources:
+  owners:
+    columns: [number, name, city]
+    filters: ["city="]
+    # An owner is also known by a membership number.
+    idAliases:
+      - {match: "^[0-9]{1,7}$", query: "number=${id}", field: number}
+
+  pets:
+    columns:
+      - tag
+      - name
+      - species
+      - {paths: [owner.name], label: owner}
+    filters: ["species=", "ownerId="]
+    conditions: ["vaccinated=false"]
+    # The owner of a pet is fetched and shown with it.
+    joins:
+      - {name: owner, column: ownerId, resource: owners, join: [name, city]}
+    urlTemplate:
+      url: pets/${id}
+    setters:
+      - name: rename
+        help: Give a pet another name
+        method: PATCH
+        pathTemplate: pets/${id}
+        payloadTemplate: {name: "${name}"}
+        message: Renamed ${id} to ${name}
+        parameters:
+          - {name: name, help: New name of the pet}
+      - name: adopt
+        help: Take in a new pet
+        requiresId: false
+        method: POST
+        pathTemplate: pets
+        payloadTemplate: {name: "${name}", species: "${species}", ownerId: "${owner}"}
+        parameters:
+          - {name: name, help: Name of the pet}
+          - {name: species, help: What kind of animal it is, choices: [cat, dog, bird]}
+          - {name: owner, required: false, resource: owners, help: ID or membership number of the owner}
+
+  visits:
+    parent: pets
+    columns: [date, reason]
