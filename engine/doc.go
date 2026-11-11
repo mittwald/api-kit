@@ -18,6 +18,14 @@
 // [Engine.Item] fetches one item, and [Engine.ResolveID] turns a value
 // that names an item, such as a number printed on an invoice, into its ID.
 //
+// [Engine.Project] lays items out in the columns of the definition and
+// adds the values of related resources that its joins name; [Engine.Link]
+// builds the link to an item in a web interface.
+//
+// [Engine.Apply] runs a call: one or more requests that change a resource,
+// with parameters, templates, conditions, and steps before and after. A
+// call is checked as a whole before anything is sent.
+//
 // # Requests
 //
 // The definition decides where a request goes: the API of the resource,

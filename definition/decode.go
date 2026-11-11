@@ -184,13 +184,19 @@ func (l *loader) identifiers(m mapping, doc *Document) {
 }
 
 func (l *loader) output(m mapping, doc *Document) {
-	doc.Output = Output{MaxCharacters: defaultMaxCharacters, NameFields: []string{"name", "title", "description"}}
+	doc.Output = Output{
+		MaxCharacters: defaultMaxCharacters,
+		ColumnOrder:   []string{defaultIDField, "${singular}Id", "name", "title", "description"},
+		NameFields:    []string{"name", "title", "description"},
+	}
 	output, ok := m.child("output")
 	if !ok {
 		return
 	}
 	doc.Output.MaxCharacters = output.integer("maxCharacters", doc.Output.MaxCharacters, 1)
-	doc.Output.ColumnOrder = output.texts("columnOrder")
+	if output.has("columnOrder") {
+		doc.Output.ColumnOrder = output.texts("columnOrder")
+	}
 	if output.has("nameFields") {
 		doc.Output.NameFields = output.texts("nameFields")
 	}

@@ -805,11 +805,11 @@ func TestCleanBody(t *testing.T) {
 			"<style>\nbody { color: red }\n</style><!-- a\ncomment --><SCRIPT type=\"text/javascript\">alert('<b>')\n</SCRIPT >Closed<br/>today",
 			"Closedtoday",
 		},
-		"a declaration and an instruction": {"<?xml version=\"1.0\"?><!DOCTYPE html>\n<error>full</error>", "full"},
-		"a tag over two lines":             {"<a\n href=\"/\">home</a>", "home"},
-		"signs that are no tags":           {"1 < 2 and 3 > 2, a<b", "1 < 2 and 3 > 2, a<b"},
-		"a JSON object as it came":         {"{\"message\": \"<b>no</b> &amp; no\"}\n\n", "{\"message\": \"<b>no</b> &amp; no\"}\n\n"},
-		"a JSON list is text":              {"[\n  \"closed\"\n\n]", "[\n\"closed\"\n]"},
+		"a declaration and an instruction":           {"<?xml version=\"1.0\"?><!DOCTYPE html>\n<error>full</error>", "full"},
+		"a tag over two lines":                       {"<a\n href=\"/\">home</a>", "home"},
+		"signs that are no tags":                     {"1 < 2 and 3 > 2, a<b", "1 < 2 and 3 > 2, a<b"},
+		"a JSON object without its last line breaks": {"{\"message\": \"<b>no</b> &amp; no\"}\n\n", "{\"message\": \"<b>no</b> &amp; no\"}"},
+		"a JSON list is text":                        {"[\n  \"closed\"\n\n]", "[\n\"closed\"\n]"},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {

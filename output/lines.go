@@ -100,6 +100,12 @@ func WriteNames(w io.Writer, items []any, nameFields []string) error {
 	return nil
 }
 
+// WriteLinks writes the link of each item on a line of its own; an item
+// without a link leaves its line empty. Nothing is written for no links.
+func WriteLinks(w io.Writer, links []string) error {
+	return writeLines(w, links)
+}
+
 // firstObject returns the first item when it is an object.
 func firstObject(items []any) (*apikit.Object, bool) {
 	if len(items) == 0 {

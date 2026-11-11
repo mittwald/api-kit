@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"slices"
@@ -70,6 +72,12 @@ type Options struct {
 	// Sleep waits before a request is sent again. It returns early, with
 	// the error of the context, when the context ends. Nil means a timer.
 	Sleep func(ctx context.Context, d time.Duration) error
+	// Stdin is read when a call takes a value from "-". Nil means there is
+	// nothing to read.
+	Stdin io.Reader
+	// Templates holds the call templates a tool ships, as YAML files at
+	// its root. Nil means it ships none.
+	Templates fs.FS
 }
 
 // Stage says what an [Engine] is busy with when it reports [Progress].
@@ -81,6 +89,10 @@ const (
 	// fetched so far, and Total is 0: how many there are shows only when
 	// the last page arrives.
 	StageFetch Stage = iota + 1
+	// StageJoin is the fetching of the related items that joins add to a
+	// result. Done counts the items of the result that are complete, and
+	// Total is their number.
+	StageJoin
 )
 
 // Progress is a report of how far an [Engine] has come with what it does.
@@ -108,6 +120,8 @@ type Engine struct {
 	log         *slog.Logger
 	progress    func(Progress)
 	sleep       func(ctx context.Context, d time.Duration) error
+	stdin       io.Reader
+	templates   fs.FS
 
 	// mu guards the answers that are kept and the requests under way.
 	mu       sync.Mutex
@@ -148,6 +162,8 @@ func New(o Options) (*Engine, error) {
 		log:         o.Log,
 		progress:    o.Progress,
 		sleep:       o.Sleep,
+		stdin:       o.Stdin,
+		templates:   o.Templates,
 		answers:     map[string]answer{},
 		inflight:    map[string]*flight{},
 	}

@@ -83,7 +83,9 @@ var (
 // say something, which the word "error" alone does not.
 func cleanBody(body string) string {
 	if strings.HasPrefix(body, "{") {
-		return body
+		// The line break many APIs end a body with would end up in the
+		// middle of a message.
+		return strings.TrimSpace(body)
 	}
 	text := markupTag.ReplaceAllString(hiddenMarkup.ReplaceAllString(body, ""), "")
 	var lines []string

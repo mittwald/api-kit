@@ -121,7 +121,8 @@ func TestLoadMinimalDefinitionFillsDefaults(t *testing.T) {
 	if doc.Identifiers.Native != nil || !slices.Equal(doc.Identifiers.Fields, []string{"id", "${singular}Id"}) {
 		t.Errorf("Identifiers = %+v", doc.Identifiers)
 	}
-	if doc.Columns.ID != "id" || doc.Output.MaxCharacters != 50 || !slices.Equal(doc.Output.NameFields, []string{"name", "title", "description"}) {
+	if doc.Columns.ID != "id" || doc.Output.MaxCharacters != 50 || !slices.Equal(doc.Output.NameFields, []string{"name", "title", "description"}) ||
+		!slices.Equal(doc.Output.ColumnOrder, []string{"id", "${singular}Id", "name", "title", "description"}) {
 		t.Errorf("Columns = %+v, Output = %+v", doc.Columns, doc.Output)
 	}
 	if len(doc.Resources()) != 0 {

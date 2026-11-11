@@ -169,7 +169,8 @@ type Output struct {
 	// MaxCharacters is the length a table cell is cut to.
 	MaxCharacters int
 	// ColumnOrder are field names that come first when all fields of an
-	// item are shown, in this order.
+	// item are shown, in this order and without regard to case.
+	// "${singular}" stands for the singular name of the resource.
 	ColumnOrder []string
 	// NameFields are the fields tried, in order, for the name of an item.
 	NameFields []string
@@ -240,15 +241,17 @@ type Header struct {
 
 // URLTemplate builds the link to an item.
 type URLTemplate struct {
-	// URL is the address; without a host it is appended to
-	// [Environment.LinkBase].
+	// URL is the address, a template; without a host it is appended to
+	// [Environment.LinkBase]. "${parameter}" in it stands for what
+	// Parameter yields.
 	URL string
-	// Parameter is a template appended to URL.
+	// Parameter is a template rendered from the item, for the
+	// "${parameter}" of URL.
 	Parameter string
-	// EncodeParameter appends the whole item instead, as base64-encoded
-	// JSON.
+	// EncodeParameter puts what Parameter yields into URL as base64.
 	EncodeParameter bool
-	// Query are the query parameters, in document order.
+	// Query are the query parameters, in document order. One whose value
+	// comes out empty is left out.
 	Query []QueryParameter
 }
 
