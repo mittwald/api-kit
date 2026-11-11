@@ -60,7 +60,9 @@ func TestReadSource(t *testing.T) {
 
 	t.Run("a file in the home directory", func(t *testing.T) {
 		home := t.TempDir()
+		// Windows names the home directory in another variable.
 		t.Setenv("HOME", home)
+		t.Setenv("USERPROFILE", home)
 		if err := os.WriteFile(filepath.Join(home, "body.txt"), []byte("from home"), 0o600); err != nil {
 			t.Fatalf("WriteFile: %v", err)
 		}
