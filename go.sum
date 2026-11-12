@@ -13,8 +13,8 @@ github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
 github.com/mattn/go-runewidth v0.0.31 h1:1oCV4ReTlosDBc6rYRw5cL8S/4y8iv5oRl4SJ5IBgwo=
 github.com/mattn/go-runewidth v0.0.31/go.mod h1:3qAiGCV4Koz/yuveO58qUefmUTRm8r0IGEXZ9jeHp/8=
-github.com/mittwald/cli-kit v0.2.2 h1:w5PsUW7+Porm5i/wy70of73yf/5H1at8SSyDVRj7U0g=
-github.com/mittwald/cli-kit v0.2.2/go.mod h1:/Omytk/65EBcYdQaLNZ/X/V9D7EZ+7gOTjmT1k3Dasc=
+github.com/mittwald/cli-kit v0.7.0 h1:xqFIyQYQ9VZXl59WmyRtJEN8wZhQEVP8DtfE+legocw=
+github.com/mittwald/cli-kit v0.7.0/go.mod h1:/Omytk/65EBcYdQaLNZ/X/V9D7EZ+7gOTjmT1k3Dasc=
 github.com/ohler55/ojg v1.28.9 h1:VL2vdN1CjniaNABNOFjorAW+/o7eBQDc4z5jO49jkHM=
 github.com/ohler55/ojg v1.28.9/go.mod h1:/Y5dGWkekv9ocnUixuETqiL58f+5pAsUfg5P8e7Pa2o=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
