@@ -146,6 +146,38 @@ func TestWriteTableForPeople(t *testing.T) {
 	}
 }
 
+// A value is whatever the API returned. In a table for people its escape
+// sequences and control characters do not reach the terminal, painted or
+// not, and a link whose address holds one is left out.
+func TestWriteTableShowsValuesPlain(t *testing.T) {
+	table := output.Table{
+		Headers: []string{"name\x1b[2J", "note"},
+		Rows: [][]any{
+			{"web\x1b]52;c;ZXZpbA==\x07\x1b[2J", "first\x1b[31m line\nsecond\u009b2J line"},
+		},
+		Links: []string{"https://example.com/\x1b\\\x1b]0;title\x07"},
+	}
+	for name, options := range map[string]output.TableOptions{
+		"plain":   {Format: output.Text},
+		"wide":    {Format: output.Wide},
+		"painted": {Format: output.Text, Color: true, Links: true, Palette: output.NewPalette(nil, "")},
+	} {
+		var out bytes.Buffer
+		if err := output.WriteTable(&out, table, options); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		shown := regexp.MustCompile("\x1b\\[[0-9;]*m").ReplaceAllString(out.String(), "")
+		if strings.ContainsAny(shown, "\x1b\x07\u009b") {
+			t.Errorf("%s: a control character reached the output: %q", name, out.String())
+		}
+		for _, want := range []string{"NAME", "web", "first line", "second line"} {
+			if !strings.Contains(shown, want) {
+				t.Errorf("%s: output misses %q: %q", name, want, shown)
+			}
+		}
+	}
+}
+
 func TestWriteTableForPrograms(t *testing.T) {
 	// The values are written as they are: no ages, nothing shortened.
 	options := output.TableOptions{Format: output.CSV, Color: true, Links: true, Ellipsis: true, MaxCharacters: 5}

@@ -71,6 +71,9 @@ func WriteTable(w io.Writer, t Table, o TableOptions) error {
 	headers := make([]string, len(columns))
 	for i, column := range columns {
 		headers[i] = t.Headers[column]
+		if human {
+			headers[i] = term.PlainLine(headers[i])
+		}
 	}
 	options := []table.Option{table.UppercaseHeaders(), table.WithColor(human && o.Color)}
 	switch o.Format {
@@ -110,7 +113,12 @@ func WriteTable(w io.Writer, t Table, o TableOptions) error {
 				cells[i] = cell
 				continue
 			}
-			cell, painted := o.humanize(cell)
+			// A value is whatever the API returned, and a drawn table shows
+			// its cells as they are: made plain first, an escape sequence
+			// in a value does not reach the terminal, where it could clear
+			// the screen or write to the clipboard. Records are plain text
+			// already.
+			cell, painted := o.humanize(term.Plain(cell))
 			if o.Color {
 				switch {
 				case len(steps[i]) > 0:
