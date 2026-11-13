@@ -145,6 +145,27 @@ func TestCallMistakes(t *testing.T) {
 	}
 }
 
+// The message of an error is often what the API answered. It is written
+// without the escape sequences and control characters it carries, so that
+// nothing in it clears the screen, writes to the clipboard or reads like a
+// line of the tool's own.
+func TestErrorsFromTheAPIAreWrittenPlain(t *testing.T) {
+	h := groomer(t)
+	h.api.Handle("PATCH", mainAPI+"/pets/0a1b2c3d", apitest.Response{
+		Status: 409,
+		// No JSON, which would carry the characters as escapes: the answer
+		// of a proxy in front of the API, as it is.
+		Raw: "name is taken\x1b]52;c;ZXZpbA==\x07\x1b[2J\u009b31m, choose another",
+	})
+	_, stderr, code := h.run("rename", "pets", "0a1b2c3d", "--name", "Rex")
+	if code != apikit.ExitFailed || !strings.HasPrefix(stderr, "ERROR: ") || !strings.Contains(stderr, "name is taken, choose another") {
+		t.Errorf("exit code = %d, stderr = %q", code, stderr)
+	}
+	if strings.ContainsAny(stderr, "\x1b\x07\u009b") {
+		t.Errorf("a control character reached the error stream: %q", stderr)
+	}
+}
+
 func TestCallFailure(t *testing.T) {
 	h := groomer(t)
 	h.api.Handle("PATCH", mainAPI+"/pets/0a1b2c3d", apitest.Response{Status: 409, Body: raw(`{"message": "name is taken"}`)})

@@ -24,6 +24,11 @@ import (
 // own. As soon as an object or a list is among the selection, it is written
 // as JSON: the one value when there is exactly one, a list otherwise. An
 // expression that cannot be parsed is an error of kind [apikit.KindUsage].
+//
+// A scalar is written as it is, line breaks included: an expression is how
+// a script takes one value out of a result, a certificate or a key as much
+// as a name. Written to a terminal, its escape sequences and control
+// characters other than the line break are left out.
 func WriteJSONPath(w io.Writer, items []any, expression string) error {
 	path, err := jp.ParseString(expression)
 	if err != nil && strings.Contains(expression, ".[") {
@@ -59,9 +64,10 @@ func WriteJSONPath(w io.Writer, items []any, expression string) error {
 		}
 		return format.WriteJSON(w, selected)
 	}
+	show := shown(w)
 	lines := make([]string, len(selected))
 	for i, value := range selected {
-		lines[i] = apikit.Text(value)
+		lines[i] = show(apikit.Text(value))
 	}
 	return writeLines(w, lines)
 }

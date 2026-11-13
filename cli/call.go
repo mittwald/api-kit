@@ -10,6 +10,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/mittwald/cli-kit/term"
+
 	apikit "github.com/mittwald/api-kit"
 	"github.com/mittwald/api-kit/cli/argv"
 	"github.com/mittwald/api-kit/definition"
@@ -389,7 +391,14 @@ func (a *App) showCall(cmd *cobra.Command, session *session, call *definition.Ca
 		writeLine(a.opts.Streams.Err, "Dry run, "+call.Name+" was not sent")
 		return nil
 	}
+	// A message names what the API returned. A program reading the output
+	// gets it as it is; on a terminal its escape sequences and control
+	// characters are left out, as in every format that writes lines.
+	plain := term.IsTerminal(w)
 	for _, message := range result.Messages {
+		if plain {
+			message = term.Plain(message)
+		}
 		if _, err := fmt.Fprintln(w, message); err != nil {
 			return failed(err)
 		}
