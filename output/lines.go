@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/mittwald/cli-kit/format"
+	"github.com/mittwald/cli-kit/term"
 
 	apikit "github.com/mittwald/api-kit"
 	"github.com/mittwald/api-kit/definition"
@@ -23,15 +24,52 @@ func WriteYAML(w io.Writer, items []any) error {
 	return format.WriteYAML(w, items)
 }
 
-// lineBreaks are the characters that would break a line of fields apart.
-var lineBreaks = regexp.MustCompile(`[\t\r\n]+`)
+// lineBreaks are the characters that would break a line of fields apart,
+// and lineEnds those that would break a line of one value apart.
+var (
+	lineBreaks = regexp.MustCompile(`[\t\r\n]+`)
+	lineEnds   = regexp.MustCompile(`[\r\n]+`)
+)
+
+// isTerminal reports whether a stream is a terminal. It is a variable so
+// that a test can put a terminal where there is none.
+var isTerminal = term.IsTerminal
+
+// shown returns what a value goes through before it is written to w as it
+// is: nothing where a program reads w, which gets the value byte for byte.
+// On a terminal a person reads it, and a value is whatever the API returned:
+// its escape sequences and control characters are left out there, as they
+// could clear the screen, write to the clipboard or pass a word off as
+// something the tool said. ls(1) hides control characters in file names on
+// the same terms.
+func shown(w io.Writer) func(string) string {
+	if isTerminal(w) {
+		return term.Plain
+	}
+	return func(value string) string { return value }
+}
+
+// writeValues writes each value on a line of its own; nothing for no
+// values. A line break inside a value becomes a space, wherever w leads: a
+// program that reads the lines would otherwise take one value for two, and
+// a value could make up a line of its own, an ID among the IDs.
+func writeValues(w io.Writer, values []string) error {
+	show := shown(w)
+	lines := make([]string, len(values))
+	for i, value := range values {
+		lines[i] = show(lineEnds.ReplaceAllString(value, " "))
+	}
+	return writeLines(w, lines)
+}
 
 // WriteColumns writes one line per item with the values of the given
 // fields, separated by tabs, for scripts. fields is a comma-separated list
 // of paths as [expr.ParsePath] reads them; a path may lead into the values
 // of joined resources. A field an item lacks is empty, and tabs and line
-// breaks inside a value become a space. A path that cannot be parsed is an
-// error of kind [apikit.KindUsage].
+// breaks inside a value become a space. Written to a terminal, a value's
+// escape sequences and control characters are left out; a program gets the
+// value as it is otherwise. A path that cannot be parsed is an error of kind
+// [apikit.KindUsage].
 func WriteColumns(w io.Writer, items []any, fields string) error {
 	var paths []expr.Path
 	for field := range strings.SplitSeq(fields, ",") {
@@ -45,12 +83,13 @@ func WriteColumns(w io.Writer, items []any, fields string) error {
 		}
 		paths = append(paths, path)
 	}
+	show := shown(w)
 	lines := make([]string, len(items))
 	for i, item := range items {
 		values := make([]string, len(paths))
 		if _, ok := item.(*apikit.Object); ok {
 			for j, path := range paths {
-				values[j] = lineBreaks.ReplaceAllString(apikit.Text(path.Get(item, definition.ExtraKey)), " ")
+				values[j] = show(lineBreaks.ReplaceAllString(apikit.Text(path.Get(item, definition.ExtraKey)), " "))
 			}
 		}
 		lines[i] = strings.Join(values, "\t")
@@ -61,6 +100,11 @@ func WriteColumns(w io.Writer, items []any, fields string) error {
 // WriteIDs writes the ID of each item on a line of its own. idOf returns
 // the ID of an item and whether it has one. Nothing is written when the
 // first item has no ID: the result is then not a list of things with IDs.
+//
+// A line break inside an ID becomes a space, so that every line is one ID.
+// Written to a terminal, an ID's escape sequences and control characters
+// are left out; a program gets it as it is otherwise. [WriteNames] and
+// [WriteLinks] treat their values the same way.
 func WriteIDs(w io.Writer, items []any, idOf func(*apikit.Object) (string, bool)) error {
 	if first, ok := firstObject(items); !ok {
 		return nil
@@ -73,7 +117,7 @@ func WriteIDs(w io.Writer, items []any, idOf func(*apikit.Object) (string, bool)
 			lines[i], _ = idOf(object)
 		}
 	}
-	return writeLines(w, lines)
+	return writeValues(w, lines)
 }
 
 // WriteNames writes the name of each item on a line of its own. The name is
@@ -95,7 +139,7 @@ func WriteNames(w io.Writer, items []any, nameFields []string) error {
 				lines[i] = apikit.Text(value)
 			}
 		}
-		return writeLines(w, lines)
+		return writeValues(w, lines)
 	}
 	return nil
 }
@@ -103,7 +147,7 @@ func WriteNames(w io.Writer, items []any, nameFields []string) error {
 // WriteLinks writes the link of each item on a line of its own; an item
 // without a link leaves its line empty. Nothing is written for no links.
 func WriteLinks(w io.Writer, links []string) error {
-	return writeLines(w, links)
+	return writeValues(w, links)
 }
 
 // firstObject returns the first item when it is an object.
