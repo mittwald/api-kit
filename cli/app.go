@@ -15,6 +15,7 @@ import (
 	"github.com/mittwald/cli-kit/buildinfo"
 	"github.com/mittwald/cli-kit/cobrax"
 	"github.com/mittwald/cli-kit/live"
+	"github.com/mittwald/cli-kit/term"
 
 	apikit "github.com/mittwald/api-kit"
 	"github.com/mittwald/api-kit/auth"
@@ -327,8 +328,15 @@ func (e errSilent) Error() string { return "exit" }
 
 // writeLine writes text and a newline. A failed write to the error stream
 // has nowhere to be reported, so it is ignored.
+// writeLine writes a line of what the tool has to say: an error, a warning,
+// a hint, a line of the log. Such a line is for a person, wherever the
+// stream leads, and much of it is not the tool's own words: the message of
+// an error is often what the API answered. Its escape sequences and control
+// characters are left out, so that nothing in it can clear the screen, write
+// to the clipboard or pass a word off as the tool's own, also once a log it
+// was kept in is shown.
 func writeLine(w io.Writer, text string) {
-	_, _ = io.WriteString(w, text+"\n")
+	_, _ = io.WriteString(w, term.Plain(text)+"\n")
 }
 
 // tracker passes writes through and remembers whether anything but white
