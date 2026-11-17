@@ -5,9 +5,8 @@ import (
 	"errors"
 	"io"
 	"os"
-	"os/exec"
-	"runtime"
 
+	"github.com/mittwald/cli-kit/browser"
 	"github.com/mittwald/cli-kit/pick"
 	"github.com/mittwald/cli-kit/term"
 
@@ -49,7 +48,7 @@ func (t terminal) Ask(_ context.Context, p definition.Prompt) (string, error) {
 		return "", apikit.Errorf(apikit.KindUnauthenticated, "cannot ask for %s without a terminal", p.Label)
 	}
 	if p.Hint != "" {
-		writeLine(t.err, p.Hint)
+		writeNotice(t.err, p.Hint)
 	}
 	answer, err := pick.Input(in, out, pick.InputOptions{Prompt: p.Label + ": ", Secret: p.Secret})
 	switch {
@@ -62,27 +61,14 @@ func (t terminal) Ask(_ context.Context, p definition.Prompt) (string, error) {
 }
 
 // OpenBrowser opens a page in the browser of the desktop. It returns at
-// once; the caller tells the user the address in case nothing opens.
+// once; the caller tells the user the address in case nothing opens. Only
+// an http or https address is opened (browser.Open of cli-kit), so an
+// address the API had a say in cannot start another program.
 func (t terminal) OpenBrowser(ctx context.Context, url string) error {
-	var command *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		command = exec.CommandContext(ctx, "open", url)
-	case "windows":
-		command = exec.CommandContext(ctx, "rundll32", "url.dll,FileProtocolHandler", url)
-	default:
-		command = exec.CommandContext(ctx, "xdg-open", url)
-	}
-	if err := command.Start(); err != nil {
-		return err
-	}
-	// Reap the launcher when it is done; its outcome says nothing about
-	// whether a page opened.
-	go func() { _ = command.Wait() }()
-	return nil
+	return browser.Open(ctx, url)
 }
 
 // Notify tells the user something on the error stream.
 func (t terminal) Notify(text string) {
-	writeLine(t.err, text)
+	writeNotice(t.err, text)
 }

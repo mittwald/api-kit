@@ -59,10 +59,7 @@ func (a *App) render(cmd *cobra.Command, session *session, result *engine.Result
 
 	joins := !a.globals.noJoins
 	if format.Tabular() {
-		links, err := a.globals.linked(w)
-		if err != nil {
-			return err
-		}
+		links := a.globals.linked(w)
 		human := format == output.Text || format == output.Wide
 		projected, err := session.engine.Project(cmd.Context(), result.Resource, items, engine.ProjectOptions{
 			AllColumns: format == output.Wide,
@@ -164,5 +161,5 @@ func (a *App) deprecated(what, replacement string) {
 		return
 	}
 	a.told[what] = true
-	writeLine(a.opts.Streams.Err, "WARNING: "+what+" is deprecated, use "+replacement)
+	writeLine(a.errs, "WARNING: "+what+" is deprecated, use "+replacement)
 }

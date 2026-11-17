@@ -10,6 +10,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/mittwald/cli-kit/cobrax"
+
 	"github.com/mittwald/api-kit/definition"
 )
 
@@ -76,7 +78,7 @@ func completeIf(doc *definition.Document, call *definition.Call) cobra.Completio
 				offers = append(offers, parameter.Name+"."+condition)
 			}
 		}
-		return startingWith(unique(offers), typed)
+		return cobrax.CompletePrefix(unique(offers), typed)
 	}
 }
 
@@ -123,7 +125,7 @@ func completeListCheck(doc *definition.Document, call *definition.Call, words []
 					resources = append(resources, resource.Name)
 				}
 			}
-			return startingWith(resources, typed)
+			return cobrax.CompletePrefix(resources, typed)
 		}
 		resource := doc.Resource(doc.ResourceName(words[0]))
 		var references []string
@@ -145,7 +147,7 @@ func completeListCheck(doc *definition.Document, call *definition.Call, words []
 			}
 		}
 		offers = append(offers, resource.Conditions...)
-		return startingWith(unique(offers), typed)
+		return cobrax.CompletePrefix(unique(offers), typed)
 	}
 }
 
@@ -161,7 +163,7 @@ func (a *App) completeTemplate(_ *cobra.Command, _ []string, typed string) ([]co
 			}
 		}
 	}
-	matches, _ := startingWith(names, typed)
+	matches, _ := cobrax.CompletePrefix(names, typed)
 	return matches, files
 }
 
@@ -184,8 +186,18 @@ func (a *App) completeLookup(doc *definition.Document, call *definition.Call, pa
 		if err != nil {
 			return nil, noFiles
 		}
-		return offers, noFiles
+		return apiCompletions(offers), noFiles
 	}
+}
+
+// apiCompletions returns the values an API listed as candidates for the
+// shell, without those it could not hand on safely: the shell writes a
+// candidate to the terminal as it is, so one with a control character or
+// invalid UTF-8 is left out, and so is one with a tab, which the shell
+// would take for the start of a description.
+func apiCompletions(values []string) []cobra.Completion {
+	values = slices.DeleteFunc(slices.Clone(values), func(value string) bool { return strings.Contains(value, "\t") })
+	return cobrax.SafeCompletions(values)
 }
 
 // unique returns the words without repetitions, in their order.

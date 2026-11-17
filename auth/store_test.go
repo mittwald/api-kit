@@ -3,9 +3,12 @@ package auth_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/mittwald/cli-kit/secret"
 
 	"github.com/mittwald/api-kit/auth"
 	"github.com/mittwald/api-kit/definition"
@@ -166,5 +169,29 @@ func TestMethodsListsTheLoginsOfTheDefinition(t *testing.T) {
 	var none auth.Source
 	if none.Kind != 0 {
 		t.Errorf("the zero Source has kind %d", none.Kind)
+	}
+}
+
+func TestStoresOfPackageSecretPlugIn(t *testing.T) {
+	if !errors.Is(fmt.Errorf("wrapped: %w", secret.ErrNotFound), auth.ErrNotFound) {
+		t.Fatal("secret.ErrNotFound is not auth.ErrNotFound")
+	}
+	f := newFixture(t)
+	store := secret.NewMemory(nil)
+	f.options.Store = store
+	m, err := auth.New(f.options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Nothing stored is no broken store: the logout has nothing to remove
+	// and fails with nothing, and nothing is logged as a warning.
+	if existed, err := m.Logout(); existed || err != nil {
+		t.Errorf("Logout() = %v, %v; want false, nil", existed, err)
+	}
+	if _, err := m.Token(context.Background()); err == nil {
+		t.Error("Token() found a token in an empty store")
+	}
+	if strings.Contains(f.log.String(), "level=WARN") {
+		t.Errorf("an empty store was taken for a broken one:\n%s", f.log)
 	}
 }

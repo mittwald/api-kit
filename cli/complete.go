@@ -6,6 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/mittwald/cli-kit/cobrax"
+
 	"github.com/mittwald/api-kit/definition"
 	"github.com/mittwald/api-kit/output"
 )
@@ -13,26 +15,6 @@ import (
 // noFiles is the directive of a completion that offers words of its own
 // and no file names.
 const noFiles = cobra.ShellCompDirectiveNoFileComp
-
-// startingWith returns the candidates that start with what was typed. When
-// each of them still needs something appended, a filter key that wants its
-// value for example, the shell is told not to add a space.
-func startingWith(candidates []string, typed string) ([]cobra.Completion, cobra.ShellCompDirective) {
-	var matches []cobra.Completion
-	open := true
-	for _, candidate := range candidates {
-		word, _, _ := strings.Cut(candidate, "\t")
-		if !strings.HasPrefix(word, typed) {
-			continue
-		}
-		matches = append(matches, candidate)
-		open = open && strings.HasSuffix(word, "=")
-	}
-	if open && len(matches) > 0 {
-		return matches, noFiles | cobra.ShellCompDirectiveNoSpace
-	}
-	return matches, noFiles
-}
 
 // completeGetArgs offers the arguments of get: a resource that can be
 // listed, nothing for the ID, and the sub-resources of the resource.
@@ -51,7 +33,7 @@ func completeGetArgs(doc *definition.Document) cobra.CompletionFunc {
 				names = append(names, resource.Name)
 			}
 		}
-		return startingWith(names, typed)
+		return cobrax.CompletePrefix(names, typed)
 	}
 }
 
@@ -79,7 +61,7 @@ func completeFilter(doc *definition.Document) cobra.CompletionFunc {
 				offers = append(offers, done+filter)
 			}
 		}
-		return startingWith(offers, typed)
+		return cobrax.CompletePrefix(offers, typed)
 	}
 }
 
@@ -111,5 +93,5 @@ func completeOutput(_ *cobra.Command, _ []string, typed string) ([]cobra.Complet
 		}
 		formats = append(formats, name+"\t"+formatHelp[format])
 	}
-	return startingWith(formats, typed)
+	return cobrax.CompletePrefix(formats, typed)
 }

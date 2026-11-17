@@ -11,7 +11,6 @@ import (
 	"github.com/mittwald/cli-kit/cobrax"
 	"github.com/mittwald/cli-kit/term"
 
-	apikit "github.com/mittwald/api-kit"
 	"github.com/mittwald/api-kit/cli/argv"
 	"github.com/mittwald/api-kit/definition"
 	"github.com/mittwald/api-kit/output"
@@ -40,7 +39,7 @@ type globals struct {
 	insecure       bool
 	noEllipsis     bool
 	noJoins        bool
-	links          string
+	links          *cobrax.ModeValue
 	failEmpty      bool
 	configOverride bool
 	token          string
@@ -64,11 +63,7 @@ func (g *globals) register(root *cobra.Command) {
 	flags.BoolVar(&g.insecure, flagInsecure, false, "do not verify the certificate of the API")
 	flags.BoolVar(&g.noEllipsis, flagNoEllipsis, false, "do not shorten long values in tables")
 	flags.BoolVar(&g.noJoins, flagNoJoins, false, "do not fetch the values of related resources")
-	flags.StringVar(&g.links, flagLinks, term.ColorAuto.String(), "when to make the first column of a table a link: auto, always or never")
-	flags.Lookup(flagLinks).NoOptDefVal = term.ColorAlways.String()
-	if err := root.RegisterFlagCompletionFunc(flagLinks, cobrax.CompleteValues(term.ColorModeNames...)); err != nil {
-		panic(err) // the flag was registered two lines up
-	}
+	g.links = cobrax.AddModeFlag(root, flagLinks, "when to make the first column of a table a link: auto, always or never")
 	flags.BoolVar(&g.failEmpty, flagFailEmpty, false, "exit with code 3 when nothing is printed")
 	flags.BoolVar(&g.configOverride, flagConfigOverride, false, "let the user's definition file replace values instead of only adding to them")
 	flags.StringVar(&g.token, flagToken, "", "token to authenticate with, instead of the stored session")
@@ -78,35 +73,19 @@ func (g *globals) register(root *cobra.Command) {
 }
 
 // aliases adds the older spellings of options every command has. Each is a
-// hidden switch that sets the option it stands for.
+// hidden switch that sets the option it stands for (cobrax.AddFlagAlias).
 func (a *App) aliases(root *cobra.Command) {
-	flags := root.PersistentFlags()
 	for _, alias := range a.opts.FlagAliases {
-		flags.BoolFunc(alias.Old, "same as --"+alias.New+"="+alias.Value, func(string) error {
-			if !alias.Silent {
-				a.deprecated("--"+alias.Old, "--"+alias.New+"="+alias.Value)
-			}
-			return flags.Set(alias.New, alias.Value)
-		})
-		flags.Lookup(alias.Old).Hidden = true
+		cobrax.AddFlagAlias(root, root.PersistentFlags(), alias)
 	}
 }
 
 // linked reports whether tables written to w carry links: always or never
 // when the user says so, otherwise when w is a terminal, where a link can
-// be clicked.
-func (g *globals) linked(w io.Writer) (bool, error) {
-	mode, err := term.ParseColorMode(g.links)
-	if err != nil {
-		return false, apikit.Errorf(apikit.KindUsage, "invalid value %q for --%s: use auto, always or never", g.links, flagLinks)
-	}
-	switch mode {
-	case term.ColorAlways:
-		return true, nil
-	case term.ColorNever:
-		return false, nil
-	}
-	return term.IsTerminal(w), nil
+// be clicked, and NO_COLOR or TERM=dumb do not ask for output free of
+// escape sequences (term.ShouldLink).
+func (g *globals) linked(w io.Writer) bool {
+	return term.ShouldLink(g.links.Mode(), w)
 }
 
 // spec returns the parsed --output value.

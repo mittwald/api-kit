@@ -14,6 +14,8 @@ import (
 )
 
 func TestParseStyle(t *testing.T) {
+	// A terminal that takes 24-bit colors gets hex colors as they are.
+	t.Setenv("COLORTERM", "truecolor")
 	tests := map[string]theme.Style{
 		"245":                     "38;5;245",
 		"160:bold":                "38;5;160;1",
@@ -33,14 +35,32 @@ func TestParseStyle(t *testing.T) {
 		"foreground=cyan":         "36",
 	}
 	for spec, want := range tests {
-		got, ok := output.ParseStyle(spec)
+		got, ok := output.ParseStyle(spec) //nolint:staticcheck // the deprecated wrapper is what is tested
 		if !ok || got != want {
 			t.Errorf("ParseStyle(%q) = %q, %v; want %q", spec, got, ok, want)
 		}
 	}
 	for _, spec := range []string{"", ":", "nonsense", "shade=red", "fg=nonsense", "256x"} {
-		if got, ok := output.ParseStyle(spec); ok || got != "" {
+		if got, ok := output.ParseStyle(spec); ok || got != "" { //nolint:staticcheck // the deprecated wrapper is what is tested
 			t.Errorf("ParseStyle(%q) = %q, %v; want nothing", spec, got, ok)
+		}
+	}
+}
+
+func TestParseStyleWithout24BitColors(t *testing.T) {
+	// Elsewhere a hex color is the nearest of the 256 colors, which every
+	// terminal that paints at all reads right; other colors stay.
+	t.Setenv("COLORTERM", "")
+	tests := map[string]theme.Style{
+		"#ff8000":       "38;5;208",
+		"bg=#000000":    "48;5;16",
+		"0xF80:bold":    "38;5;208;1",
+		"245":           "38;5;245",
+		"fg=white:bg=1": "37;48;5;1",
+	}
+	for spec, want := range tests {
+		if got, ok := output.ParseStyle(spec); !ok || got != want { //nolint:staticcheck // the deprecated wrapper is what is tested
+			t.Errorf("ParseStyle(%q) = %q, %v; want %q", spec, got, ok, want)
 		}
 	}
 }
@@ -215,6 +235,18 @@ func TestWriteTableShortensLongValues(t *testing.T) {
 	options.Ellipsis = false
 	if got := writeTable(t, table, options); !strings.Contains(got, "over two lines") {
 		t.Errorf("without ellipsis the value was shortened:\n%s", got)
+	}
+
+	// A value is measured in the cells it takes on a terminal: eight wide
+	// characters take sixteen, more than the ten there are, though they are
+	// fewer than ten characters.
+	wide := output.Table{Headers: []string{"note"}, Rows: [][]any{{"日本語のテキスト"}, {"äöüäöüäöüä"}}}
+	options.Ellipsis = true
+	if got, want := writeTable(t, wide, options), ""+
+		"NOTE\n"+
+		"日本語の…\n"+
+		"äöüäöüäöüä\n"; got != want {
+		t.Errorf("table of wide characters:\n%q\nwant:\n%q", got, want)
 	}
 }
 

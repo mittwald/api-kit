@@ -212,6 +212,18 @@ func TestGetFailures(t *testing.T) {
 		t.Errorf("a server error: exit code = %d, stdout = %q, stderr = %q", code, stdout, stderr)
 	}
 
+	// An API that repeats a credential in its error does not get it onto
+	// the screen; what goes to the output stream is left alone.
+	h.api.Handle("GET", mainAPI+"/pets/0a1b2c3e", apitest.Response{Status: 400, Body: raw(`{"message": "bad request", "password": "hunter2", "header": "Bearer abcdefgh12345678"}`)})
+	stdout, stderr, code = h.run("get", "pets", "0a1b2c3e")
+	if code == apikit.ExitOK || stdout != "" || strings.Contains(stderr, "hunter2") || strings.Contains(stderr, "abcdefgh12345678") || !strings.Contains(stderr, "[REDACTED]") {
+		t.Errorf("an error with credentials: exit code = %d, stdout = %q, stderr = %q", code, stdout, stderr)
+	}
+	h.api.Handle("GET", mainAPI+"/pets/0a1b2c3f", apitest.Response{Body: raw(`{"id": "0a1b2c3f", "name": "Abe", "password": "hunter2"}`)})
+	if stdout, _, _ = h.run("get", "pets", "0a1b2c3f", "-o", "json"); !strings.Contains(stdout, "hunter2") {
+		t.Errorf("the output of a value was redacted: %q", stdout)
+	}
+
 	_, stderr, code = h.run("get", "receipts")
 	if code != apikit.ExitFailed || !strings.Contains(stderr, "receipts cannot be listed directly") {
 		t.Errorf("a resource that cannot be listed: exit code = %d, stderr = %q", code, stderr)
@@ -293,5 +305,34 @@ func TestTunablesFromTheEnvironment(t *testing.T) {
 	}
 	if strings.Contains(stderr, "PAGINATION") {
 		t.Errorf("a valid value caused a warning:\n%s", stderr)
+	}
+}
+
+func TestLinks(t *testing.T) {
+	h := newTool(t)
+	listPets(h)
+	h.overlay("resources:\n  pets:\n    urlTemplate: {url: '/pets/${parameter}', parameter: '${id}'}\n")
+	// A table that does not go to a terminal has no links, unless asked.
+	if stdout, stderr, code := h.run("get", "pets"); code != apikit.ExitOK || strings.Contains(stdout, "\x1b]8;") {
+		t.Errorf("--links=auto: exit code = %d, stdout = %q, stderr = %q", code, stdout, stderr)
+	}
+	for _, line := range [][]string{{"--links", "get", "pets"}, {"get", "pets", "--links=always"}} {
+		stdout, stderr, code := h.run(line...)
+		if code != apikit.ExitOK || !strings.Contains(stdout, "\x1b]8;;https://shop.example.test/pets/0a1b2c3d\x1b\\REX-7") {
+			t.Errorf("%v: exit code = %d, stdout = %q, stderr = %q", line, code, stdout, stderr)
+		}
+	}
+	if stdout, _, _ := h.run("get", "pets", "--links=never"); strings.Contains(stdout, "\x1b]8;") {
+		t.Errorf("--links=never: stdout = %q", stdout)
+	}
+	// A value that is none fails as the command line is read, whatever the
+	// format, before anything is sent.
+	before := len(h.api.Requests())
+	_, stderr, code := h.run("get", "pets", "--links=sometimes", "-o", "json")
+	if code != apikit.ExitUsage || !strings.Contains(stderr, `"sometimes"`) || !strings.Contains(stderr, "--links") {
+		t.Errorf("--links=sometimes: exit code = %d, stderr = %q", code, stderr)
+	}
+	if sent := len(h.api.Requests()) - before; sent != 0 {
+		t.Errorf("an invalid --links sent %d requests", sent)
 	}
 }

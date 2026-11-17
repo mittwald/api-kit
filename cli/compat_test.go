@@ -57,6 +57,15 @@ func TestFlagAliases(t *testing.T) {
 	if code != apikit.ExitOK || stdout != "Staged\n" || stderr != "WARNING: --staging is deprecated, use --env=staging\n" {
 		t.Errorf("an alias: exit code = %d, stdout = %q, stderr = %q", code, stdout, stderr)
 	}
+	// Switched off, it does nothing but name its replacement.
+	stdout, stderr, code = h.run("get", "pets", "--staging=false", "--api-main", "-o", "name")
+	if code != apikit.ExitOK || stdout != "Main\n" || stderr != "WARNING: --staging is deprecated, use --env=staging\n" {
+		t.Errorf("an alias switched off: exit code = %d, stdout = %q, stderr = %q", code, stdout, stderr)
+	}
+	// It is no word for completion to offer.
+	if offers, _ := complete(t, h, "get", "pets", "--sta"); len(offers) != 0 {
+		t.Errorf("completion offers %v", offers)
+	}
 
 	stdout, _, _ = h.runBare("get", "--help")
 	if strings.Contains(stdout, "api-main") || strings.Contains(stdout, "--staging") {

@@ -6,7 +6,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/mittwald/cli-kit/format"
 	"github.com/mittwald/cli-kit/table"
@@ -42,8 +41,9 @@ type TableOptions struct {
 	Links bool
 	// Ellipsis shortens long values.
 	Ellipsis bool
-	// MaxCharacters is the length a value is shortened to; 0 means no
-	// limit.
+	// MaxCharacters is the width a value is shortened to, in the cells it
+	// takes on a terminal, where a wide character such as 日 takes two; 0
+	// means no limit.
 	MaxCharacters int
 	// KeepWhole match values that are never shortened, such as IDs.
 	KeepWhole []*regexp.Regexp
@@ -195,12 +195,14 @@ func (o TableOptions) humanize(cell string) (string, bool) {
 		}
 		return o.Palette.Age.Paint(age), true
 	}
-	if !o.Ellipsis || o.MaxCharacters <= 0 || utf8.RuneCountInString(cell) <= o.MaxCharacters {
+	// A shortened value stays on one line, so a value is measured as that
+	// line, in the cells a terminal gives it: a wide character takes two.
+	line := strings.ReplaceAll(cell, "\n", " ")
+	if !o.Ellipsis || o.MaxCharacters <= 0 || term.VisibleWidth(line) <= o.MaxCharacters {
 		return cell, false
 	}
 	if slices.ContainsFunc(o.KeepWhole, func(pattern *regexp.Regexp) bool { return pattern.MatchString(cell) }) {
 		return cell, false
 	}
-	// A shortened value stays on one line.
-	return term.Truncate(strings.ReplaceAll(cell, "\n", " "), o.MaxCharacters), false
+	return term.Truncate(line, o.MaxCharacters), false
 }

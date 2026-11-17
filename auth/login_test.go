@@ -86,7 +86,9 @@ func TestPasswordLoginFailures(t *testing.T) {
 		want    string
 	}{
 		{"the API refuses the credentials", reply{status: 401, body: "{\"message\":\n \"wrong password hunter-secret for ada\"}"}, 204,
-			apikit.KindUnauthenticated, `login "password" failed: the API answered 401: {"message": "wrong password *** for ada"}`},
+			apikit.KindUnauthenticated, `login "password" failed: the API answered 401: {"message": "wrong password [REDACTED] for ada"}`},
+		{"the API repeats a credential it made itself", reply{status: 401, body: `{"message": "expired", "refreshToken": "old-refresh-token", "url": "https://x.test/?password=hunter-secret"}`}, 204,
+			apikit.KindUnauthenticated, `the API answered 401: {"message": "expired", "refreshToken": "[REDACTED]", "url": "https://x.test/?password=[REDACTED]"}`},
 		{"the API refuses without a word", reply{status: 403}, 204,
 			apikit.KindUnauthenticated, `login "password" failed: the API answered 403`},
 		{"a long answer is cut between two characters", reply{status: 500, body: "x" + strings.Repeat("ä", 400)}, 204,
@@ -140,7 +142,7 @@ func TestPasswordLoginFailures(t *testing.T) {
 			return reply{status: 422, body: `{"rejected": ` + received.Body + `}`}
 		})
 		_, err := f.manager().Login(context.Background(), "password")
-		want := `login "password" failed: the API answered 422: {"rejected": {"email":"ada@example.test","password":"***"}}`
+		want := `login "password" failed: the API answered 422: {"rejected": {"email":"ada@example.test","password":"[REDACTED]"}}`
 		if err == nil || err.Error() != want {
 			t.Errorf("Login() error = %v, want %s", err, want)
 		}

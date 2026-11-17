@@ -13,6 +13,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/mittwald/cli-kit/secret"
+
 	apikit "github.com/mittwald/api-kit"
 	"github.com/mittwald/api-kit/definition"
 )
@@ -136,16 +138,12 @@ func (m *Manager) passwordLogin(ctx context.Context, method definition.LoginMeth
 
 // excerpt returns the start of a response for an error message, on one
 // line and after a colon, or nothing for an empty response. The secrets,
-// which a response may repeat, are blanked, as they are and as JSON spells
-// them.
+// which a response may repeat, are replaced by [REDACTED] as they are and
+// in the forms a request spells them, escaped for JSON or a URL
+// (secret.Redact), and so is anything else that looks like a credential,
+// such as the value of a "token" (secret.RedactPatterns).
 func excerpt(body []byte, secrets []string) string {
-	text := string(body)
-	for _, secret := range secrets {
-		text = strings.ReplaceAll(text, secret, "***")
-		if quoted, err := apikit.Marshal(secret); err == nil && len(quoted) > 2 {
-			text = strings.ReplaceAll(text, string(quoted[1:len(quoted)-1]), "***")
-		}
-	}
+	text := secret.RedactPatterns(secret.Redact(string(body), secrets...))
 	text = strings.Join(strings.Fields(text), " ")
 	if text == "" {
 		return ""

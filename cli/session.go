@@ -2,12 +2,10 @@ package cli
 
 import (
 	"context"
-	"errors"
-	"io"
 	"log/slog"
 	"strings"
-	"sync"
 
+	"github.com/mittwald/cli-kit/logx"
 	"github.com/mittwald/cli-kit/secret"
 
 	apikit "github.com/mittwald/api-kit"
@@ -42,12 +40,15 @@ func (a *App) session(doc *definition.Document) (*session, error) {
 
 	logger := slog.New(slog.DiscardHandler)
 	if g.verbose {
-		logger = slog.New(&lineHandler{w: a.opts.Streams.Err, mu: &sync.Mutex{}})
-		writeLine(a.opts.Streams.Err, "Version: "+a.opts.Build.String())
+		// Every record, also those at the debug level, as one plain line
+		// with its credentials redacted.
+		logger = slog.New(logx.NewLineHandler(a.errs, &logx.Options{Level: slog.LevelDebug}))
+		writeLine(a.errs, "Version: "+a.opts.Build.String())
 	} else if !a.completing {
-		// The log and the status line would get into each other's way.
+		// The log and the status line would get into each other's way. The
+		// line is drawn to the stream itself: what the tool writes goes
+		// through a.out and a.errs, which take the line off first.
 		a.status = newStatus(a.opts.Streams.Err)
-		a.out.before = a.status.clear
 	}
 
 	store, err := a.store()
@@ -102,16 +103,41 @@ func (a *App) session(doc *definition.Document) (*session, error) {
 }
 
 // ui returns who asks the user for credentials: what the host passed in, or
-// the terminal.
+// the terminal, with the status line kept off the terminal meanwhile.
 func (a *App) ui() auth.UI {
 	if a.completing {
 		// A completion must not ask for a password.
 		return nil
 	}
+	var ui auth.UI = terminal{in: a.opts.Streams.In, out: a.opts.Streams.Out, err: a.opts.Streams.Err}
 	if a.opts.UI != nil {
-		return a.opts.UI
+		ui = a.opts.UI
 	}
-	return terminal{in: a.opts.Streams.In, out: a.opts.Streams.Out, err: a.opts.Streams.Err}
+	if a.status == nil {
+		return ui
+	}
+	return heldUI{UI: ui, status: a.status}
+}
+
+// heldUI is the UI of a run with a status line: it takes the line off the
+// terminal and keeps it off while the user is told or asked something, so
+// that the line is not drawn into the middle of a prompt or over a notice.
+type heldUI struct {
+	auth.UI
+	status *status
+}
+
+// Ask asks with the status line kept off the terminal.
+func (u heldUI) Ask(ctx context.Context, p definition.Prompt) (string, error) {
+	defer u.status.pause()()
+	return u.UI.Ask(ctx, p)
+}
+
+// Notify tells the user something with the status line kept off the
+// terminal.
+func (u heldUI) Notify(text string) {
+	defer u.status.pause()()
+	u.UI.Notify(text)
 }
 
 // store returns where sessions are kept between runs: what the host passed
@@ -124,33 +150,9 @@ func (a *App) store() (auth.Store, error) {
 	if err != nil {
 		return nil, apikit.Errorf(apikit.KindFailed, "cannot set up the session store: %w", err)
 	}
-	return secretStore{store: secret.Fallback(secret.Keyring{Service: a.opts.Name}, files)}, nil
-}
-
-// secretStore makes a store of cli-kit one that package auth understands:
-// the two differ in the error that says nothing is stored.
-type secretStore struct {
-	store secret.Store
-}
-
-func (s secretStore) Get(account string) (string, error) {
-	value, err := s.store.Get(account)
-	if errors.Is(err, secret.ErrNotFound) {
-		return "", auth.ErrNotFound
-	}
-	return value, err
-}
-
-func (s secretStore) Set(account, value string) error {
-	return s.store.Set(account, value)
-}
-
-func (s secretStore) Delete(account string) error {
-	err := s.store.Delete(account)
-	if errors.Is(err, secret.ErrNotFound) {
-		return auth.ErrNotFound
-	}
-	return err
+	// auth.ErrNotFound is secret.ErrNotFound: a store of cli-kit needs no
+	// adapter.
+	return secret.Fallback(secret.Keyring{Service: a.opts.Name}, files), nil
 }
 
 func environmentOf(doc *definition.Document, name string) (definition.Environment, bool) {
@@ -169,29 +171,3 @@ func environmentNames(doc *definition.Document) []string {
 	}
 	return names
 }
-
-// lineHandler writes log records as plain lines: the message, then the
-// attributes as key=value. It is what --verbose shows.
-type lineHandler struct {
-	w  io.Writer
-	mu *sync.Mutex
-}
-
-func (h *lineHandler) Enabled(context.Context, slog.Level) bool { return true }
-
-func (h *lineHandler) Handle(_ context.Context, record slog.Record) error {
-	var line strings.Builder
-	line.WriteString(record.Message)
-	record.Attrs(func(attr slog.Attr) bool {
-		line.WriteString(" " + attr.Key + "=" + attr.Value.String())
-		return true
-	})
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	writeLine(h.w, line.String())
-	return nil
-}
-
-func (h *lineHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
-
-func (h *lineHandler) WithGroup(string) slog.Handler { return h }

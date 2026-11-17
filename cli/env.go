@@ -25,7 +25,9 @@ func (e *Env) Definition() *definition.Document { return e.doc }
 
 // Streams returns the standard streams of the tool. Results go to the
 // output stream of cmd rather than to Streams().Out, which lacks the
-// bookkeeping behind --fail-empty.
+// bookkeeping behind --fail-empty, and messages to the error stream of
+// cmd, cmd.ErrOrStderr(), rather than to Streams().Err, which does not take
+// the status line off the terminal first.
 func (e *Env) Streams() Streams { return e.app.opts.Streams }
 
 // Engine returns an engine for the options of this run: the environment,

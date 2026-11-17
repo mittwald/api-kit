@@ -28,10 +28,10 @@ func (a *App) configCommand(doc *definition.Document) *cobra.Command {
 			// The hint goes to the error stream, so that redirecting the
 			// output into a file gives a clean document.
 			for _, overlay := range a.opts.Overlays {
-				writeLine(a.opts.Streams.Err, "# A file of the same shape extends this definition: "+overlay.Path)
+				writeLine(a.errs, "# A file of the same shape extends this definition: "+overlay.Path)
 			}
 			if len(a.opts.Overlays) > 0 {
-				writeLine(a.opts.Streams.Err, "# It can add to the definition; with --"+flagConfigOverride+" it can also replace values.")
+				writeLine(a.errs, "# It can add to the definition; with --"+flagConfigOverride+" it can also replace values.")
 			}
 			switch spec.Format {
 			case output.JSON, output.JSONRaw:
