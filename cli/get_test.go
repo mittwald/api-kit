@@ -75,7 +75,7 @@ func TestGetFormats(t *testing.T) {
 		t.Errorf("JSON does not keep the order of the API's keys:\n%s", stdout)
 	}
 	stdout, _, _ = h.run("get", "pets", "-o", "yaml")
-	if !strings.HasPrefix(stdout, "  - id: 0a1b2c3d\n    tag: REX-7\n") {
+	if !strings.HasPrefix(stdout, "- id: 0a1b2c3d\n  tag: REX-7\n") {
 		t.Errorf("YAML does not keep the order of the API's keys:\n%s", stdout)
 	}
 }

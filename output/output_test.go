@@ -171,13 +171,14 @@ func TestWriteYAMLKeepsOrder(t *testing.T) {
 	got := written(t, func(b *bytes.Buffer) error {
 		return output.WriteYAML(b, items(t, `[{"zeta": 1, "alpha": "text", "flag": "true", "list": ["a", {"beta": null}]}]`))
 	})
-	// cli-kit indents sequences, the outermost one included.
-	want := `  - zeta: 1
-    alpha: text
-    flag: "true"
-    list:
-      - a
-      - beta: null
+	// cli-kit indents nested sequences; the outermost one starts at the
+	// first column.
+	want := `- zeta: 1
+  alpha: text
+  flag: "true"
+  list:
+    - a
+    - beta: null
 `
 	if got != want {
 		t.Errorf("WriteYAML wrote:\n%s\nwant:\n%s", got, want)

@@ -14,7 +14,7 @@
 // text, without escape sequences and control characters, and with the
 // credentials they can be seen to hold replaced by [REDACTED], such as the
 // value of a "password" or "token" field, a Bearer token or a token whose
-// prefix names its issuer (secret.RedactPatterns of cli-kit). Results on
+// prefix names its issuer (redact.Patterns of cli-kit). Results on
 // the output stream are left as the API returned them.
 //
 // On a terminal a long run shows what it is busy with on a status line

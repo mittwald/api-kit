@@ -13,7 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/mittwald/cli-kit/secret"
+	"github.com/mittwald/cli-kit/redact"
 
 	apikit "github.com/mittwald/api-kit"
 	"github.com/mittwald/api-kit/definition"
@@ -140,10 +140,10 @@ func (m *Manager) passwordLogin(ctx context.Context, method definition.LoginMeth
 // line and after a colon, or nothing for an empty response. The secrets,
 // which a response may repeat, are replaced by [REDACTED] as they are and
 // in the forms a request spells them, escaped for JSON or a URL
-// (secret.Redact), and so is anything else that looks like a credential,
-// such as the value of a "token" (secret.RedactPatterns).
+// (redact.Values), and so is anything else that looks like a credential,
+// such as the value of a "token" (redact.Patterns).
 func excerpt(body []byte, secrets []string) string {
-	text := secret.RedactPatterns(secret.Redact(string(body), secrets...))
+	text := redact.Patterns(redact.Values(string(body), secrets...))
 	text = strings.Join(strings.Fields(text), " ")
 	if text == "" {
 		return ""
