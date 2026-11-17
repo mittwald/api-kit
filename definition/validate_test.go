@@ -56,6 +56,17 @@ func TestValidSetters(t *testing.T) {
     - {as: session, call: login, resource: owners, id: "${keeper}", select: token}
   then:
     - {as: note, call: login, resource: owners, id: "${result}", select: id, parameters: {who: "${keeper}"}}`,
+		"steps that may not run feed only steps": `
+- name: adopt
+  requiresId: false
+  pathTemplate: pets
+  parameters: [{name: owner}, {name: quiet, type: bool, required: false}, {name: pet-name, required: false}]
+  steps:
+    - {as: keeper, get: owners, id: "${owner}", select: id, when: ["quiet!=true", "pet-name=", "owner.city=Berlin"]}
+    - {as: session, call: login, resource: owners, id: "${keeper}", select: token}
+    - {as: note, call: login, resource: owners, id: "${owner}", select: id, when: [keeper!=]}
+  then:
+    - {as: logged, call: login, resource: owners, id: "${result}", select: id, when: ["result!=", "note!="]}`,
 		"a plain dollar name is text, not a variable": `
 - {name: price, pathTemplate: "pets/${id}", message: "Costs $amount or $$5"}`,
 		"a lookup uses parameters and variables": `
@@ -217,6 +228,41 @@ func TestSetterProblems(t *testing.T) {
 			[]string{at + "[0].then[0]: only call steps can run after the request"}},
 		{"result before the request", `- {name: feed, steps: [{as: keeper, get: owners, id: "${result}", select: id}]}`,
 			[]string{at + `[0].steps[0]: template variable "result" is not a parameter or an earlier step`}},
+		{"condition of a step that is none", `- {name: feed, steps: [{as: keeper, get: owners, select: id, when: [quiet]}]}`,
+			[]string{at + `[0].steps[0].when[0]: "quiet" is not a condition`}},
+		{"condition of a step that is no string", `- {name: feed, steps: [{as: keeper, get: owners, select: id, when: [{quiet: true}]}]}`,
+			[]string{at + "[0].steps[0].when[0]: must be a string, not a mapping"}},
+		{"condition of a step without a name", `- {name: feed, steps: [{as: keeper, get: owners, select: id, when: [".city=Berlin"]}]}`,
+			[]string{at + `[0].steps[0].when[0]: condition ".city=Berlin" must start with the name of a value`}},
+		{"condition of a step that filters its name", `- {name: feed, parameters: [{name: tags, type: list}], steps: [{as: keeper, get: owners, select: id, when: ["tags[x=1]=y"]}]}`,
+			[]string{at + `[0].steps[0].when[0]: condition "tags[x=1]=y": a filter cannot follow the name of a value`}},
+		{"condition of a step with a broken field", `- {name: feed, steps: [{as: keeper, get: owners, select: id, when: ["id.=x"]}]}`,
+			[]string{at + `[0].steps[0].when[0]: condition "id.=x": empty path`}},
+		{"condition of a step on an unknown value", `- {name: feed, steps: [{as: keeper, get: owners, select: id, when: [quiet=true]}]}`,
+			[]string{at + `[0].steps[0].when[0]: condition "quiet=true" tests "quiet", which is not a parameter or an earlier step`}},
+		{"condition of a step on a later step", `
+- name: feed
+  steps:
+    - {as: keeper, get: owners, select: id, when: [session!=]}
+    - {as: session, get: owners, select: id}`,
+			[]string{at + `[0].steps[0].when[0]: condition "session!=" tests "session", which is not a parameter or an earlier step`}},
+		{"request that needs a step that may not run", `
+- name: feed
+  pathTemplate: pets/${id}/${keeper}
+  payloadTemplate: {by: "${session}"}
+  token: "${session}"
+  message: Fed by $session_key
+  parameters: [{name: quiet, type: bool, required: false}]
+  steps:
+    - {as: keeper, get: owners, select: id, when: [quiet!=true]}
+    - {as: session, call: login, resource: owners, id: "$keeper", select: token}
+    - {as: session-key, get: owners, select: id, when: ["keeper=${HOME}"]}`,
+			[]string{
+				at + `[0].pathTemplate: template variable "keeper" is a step that may not run`,
+				at + `[0].payloadTemplate: template variable "session" is a step that may not run`,
+				at + `[0].token: template variable "session" is a step that may not run`,
+				at + `[0].message: template variable "session_key" is a step that may not run`,
+			}},
 
 		{"token from something that is no step", `- {name: feed, parameters: [{name: secret}], token: "${secret}"}`,
 			[]string{at + `[0].token: template variable "secret" is not a step`}},

@@ -119,7 +119,7 @@ func (l *loader) setters(doc *Document, resource *Resource, path string) {
 		if setter.RequiresID {
 			known[VariableID] = true
 		}
-		stepNames := l.steps(doc, setter.Steps, known, false)
+		stepNames, optional := l.steps(doc, setter.Steps, known, false)
 		for _, name := range stepNames {
 			known[name] = true
 		}
@@ -133,6 +133,7 @@ func (l *loader) setters(doc *Document, resource *Resource, path string) {
 			}
 		}
 		l.setterTemplates(setter, known)
+		l.optionalSteps(setter, optional)
 		l.parameterGroups(setter, c)
 		l.sharedVariables(setter, variableSources)
 	}
@@ -276,10 +277,11 @@ func (l *loader) knownResource(path string, doc *Document, name string) {
 	}
 }
 
-// steps checks the steps of a setter and returns the names they add. known
-// are the names a step may use besides those of earlier steps.
-func (l *loader) steps(doc *Document, steps []*Step, known map[string]bool, then bool) []string {
-	var names []string
+// steps checks the steps of a setter and returns the names they add, and
+// of those the names of the steps that may not run: a step with conditions,
+// or one that uses what such a step keeps. known are the names a step may
+// use besides those of earlier steps.
+func (l *loader) steps(doc *Document, steps []*Step, known map[string]bool, then bool) (names, optional []string) {
 	for _, step := range steps {
 		if known[step.As] || slices.Contains(names, step.As) || slices.Contains(reservedVariables, step.As) {
 			l.problemf(join(step.path, "as"), "%q is taken by a parameter, another step or the call itself", step.As)
@@ -297,15 +299,58 @@ func (l *loader) steps(doc *Document, steps []*Step, known map[string]bool, then
 				l.problemf(join(step.path, "call"), "resource %q has no call %q", step.Resource, step.Call)
 			}
 		}
-		// A step sees the parameters, the ID and the steps before it.
-		for _, variable := range variablesOf(step.raw) {
+		// A step sees the parameters, the ID and the steps before it. Its
+		// conditions are no templates: their values are compared as written.
+		templates := apikit.NewObject()
+		for key, value := range step.raw.All() {
+			if key != "when" {
+				templates.Set(key, value)
+			}
+		}
+		for _, variable := range variablesOf(templates) {
 			if !known[variable] && !slices.Contains(names, variable) {
 				l.problemf(step.path, "template variable %q is not a parameter or an earlier step", variable)
 			}
 		}
+		// So do its conditions, which name a value without a placeholder.
+		for i, condition := range step.When {
+			if !known[condition.Name] && !slices.Contains(names, condition.Name) {
+				l.problemf(index(join(step.path, "when"), i), "condition %q tests %q, which is not a parameter or an earlier step",
+					condition.Source, condition.Name)
+			}
+		}
+		if len(step.When) > 0 || slices.ContainsFunc(namesOf(templates), func(name string) bool {
+			return slices.Contains(optional, sameSpelling(name))
+		}) {
+			optional = append(optional, sameSpelling(step.As))
+		}
 		names = append(names, step.As)
 	}
-	return names
+	return names, optional
+}
+
+// optionalSteps checks that the request of a setter does not depend on a
+// step that may not run: its placeholder would be sent as it is written.
+func (l *loader) optionalSteps(setter *Setter, optional []string) {
+	if len(optional) == 0 {
+		return
+	}
+	templates := []struct {
+		key      string
+		template any
+	}{
+		{"pathTemplate", setter.PathTemplate},
+		{"payloadTemplate", setter.PayloadTemplate},
+		{"token", setter.Token},
+		{"message", setter.Message},
+	}
+	for _, t := range templates {
+		for _, variable := range namesOf(t.template) {
+			if slices.Contains(optional, sameSpelling(variable)) {
+				l.problemf(join(setter.path, t.key), "template variable %q is a step that may not run", variable)
+			}
+		}
+	}
 }
 
 // hasCall reports whether a resource has a setter of that name or alias.
@@ -432,22 +477,43 @@ func variablesOf(template any) []string {
 	return slices.Sorted(maps.Keys(seen))
 }
 
+// sameSpelling returns the one spelling of a name that a template may write
+// with dashes or with underscores.
+func sameSpelling(name string) string {
+	return strings.ReplaceAll(name, "_", "-")
+}
+
+// namesOf returns the names of all placeholders in a template: ${name} and
+// $name alike. A plain $name may be text, but rendering fills it in when it
+// names a value, so it depends on that value all the same.
+func namesOf(template any) []string {
+	seen := map[string]bool{}
+	collectPlaceholders(template, seen, true)
+	return slices.Sorted(maps.Keys(seen))
+}
+
 func collectVariables(v any, seen map[string]bool) {
+	collectPlaceholders(v, seen, false)
+}
+
+// collectPlaceholders adds the names of the placeholders in v to seen: of
+// all of them with plain, else only of those in braces.
+func collectPlaceholders(v any, seen map[string]bool, plain bool) {
 	switch value := v.(type) {
 	case string:
 		for _, placeholder := range expr.ParseTemplate(value).Placeholders() {
-			if placeholder.Braced {
+			if placeholder.Braced || plain {
 				seen[placeholder.Name] = true
 			}
 		}
 	case []any:
 		for _, item := range value {
-			collectVariables(item, seen)
+			collectPlaceholders(item, seen, plain)
 		}
 	case *apikit.Object:
 		for key, item := range value.All() {
-			collectVariables(key, seen)
-			collectVariables(item, seen)
+			collectPlaceholders(key, seen, plain)
+			collectPlaceholders(item, seen, plain)
 		}
 	}
 }

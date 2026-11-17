@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	apikit "github.com/mittwald/api-kit"
+	"github.com/mittwald/api-kit/expr"
 )
 
 // Keys of a definition document that code outside the decoder refers to.
@@ -533,9 +534,29 @@ type Step struct {
 	Select string
 	// Parameters are the parameters of Call: templates by name.
 	Parameters *apikit.Object
+	// When are the conditions under which the step runs: all of them must
+	// hold. A step without conditions always runs. A step that does not run
+	// keeps nothing, and a step that uses what it would have kept does not
+	// run either.
+	When []StepCondition
 
 	path string
 	raw  *apikit.Object
+}
+
+// A StepCondition is a condition of a step, written like the conditions of
+// a call: a path, an operator and a value, as in internal!=true or
+// owner.city=Berlin. The path starts with the name of a value the step
+// sees: a parameter, a variable, the ID, the result of the request for a
+// step after it, or what an earlier step kept. A name that has no value tests as empty, so
+// a flag that was not given is not true.
+type StepCondition struct {
+	expr.Condition
+	// Name is the value the condition tests.
+	Name string
+	// Field leads to the tested value inside that value. The zero Path
+	// tests the value itself.
+	Field expr.Path
 }
 
 // Resources returns the resources the definition describes, in document

@@ -754,3 +754,136 @@ func TestThenSteps(t *testing.T) {
 		wantRequests(t, shop.api, opened, "POST "+notes+` {"text":"one"}`)
 	})
 }
+
+// whenOverlay gives the kennels calls whose steps run only under
+// conditions, before the request and after it.
+const whenOverlay = `
+resources:
+  kennels:
+    setters:
+      - name: report
+        pathTemplate: "kennels/${id}/report"
+        payloadTemplate: {text: "${text}"}
+        parameters:
+          - {name: visit}
+          - {name: text}
+          - {name: quiet, type: bool, required: false}
+        steps:
+          - {as: note, call: add, resource: appointments, id: "${visit}", parameters: {text: "${text}"}, select: noteId, when: ["quiet!=true"]}
+          - {as: echo, call: add, resource: appointments, id: "${visit}", parameters: {text: "after $note"}, select: noteId}
+          - {as: last, call: add, resource: appointments, id: "${visit}", parameters: {text: "last"}, select: noteId, when: ["text=Hello"]}
+      - name: close
+        requiresId: false
+        pathTemplate: kennels
+        payloadTemplate: {name: "${name}"}
+        parameters:
+          - {name: name}
+          - {name: quiet, type: bool, required: false}
+        then:
+          - {as: first, call: add, resource: appointments, id: "${result}", parameters: {text: one}, select: noteId, when: ["quiet!=true"]}
+      - name: shut
+        requiresId: false
+        pathTemplate: kennels
+        payloadTemplate: {name: "${name}"}
+        parameters:
+          - {name: name}
+          - {name: quiet, type: bool, required: false}
+          - {name: loud, type: bool, required: false}
+        steps:
+          - {as: shout, call: add, resource: appointments, id: ` + appointment + `, parameters: {text: shout}, select: noteId, when: ["loud=true"]}
+        then:
+          - {as: echo, call: add, resource: appointments, id: "${result}", parameters: {text: "echo ${shout}"}, select: noteId}
+          - {as: first, call: add, resource: appointments, id: "${result}", parameters: {text: one}, select: noteId, when: ["quiet!=true"]}
+          - {as: second, call: add, resource: appointments, id: "${result}", parameters: {text: "after ${first}"}, select: noteId}
+          - {as: third, call: add, resource: appointments, id: "${result}", parameters: {text: three}, select: noteId, when: ["result=` + appointment + `"]}
+`
+
+func TestStepConditions(t *testing.T) {
+	notes := adminAPI + "/appointments/" + appointment + "/notes"
+	reported := "POST " + mainAPI + "/kennels/" + kennel + "/report"
+	report := func(t *testing.T, params map[string]any) *shop {
+		t.Helper()
+		shop := callShop(t, nil, whenOverlay)
+		shop.api.Handle("POST", notes, apitest.Response{Sequence: []apitest.Response{
+			{Body: map[string]any{"noteId": "0a0a0a01"}}, {Body: map[string]any{"noteId": "0a0a0a02"}},
+			{Body: map[string]any{"noteId": "0a0a0a03"}},
+		}})
+		shop.api.Handle("POST", "/v1/kennels/"+kennel+"/report", noContent)
+		given := map[string]any{"visit": appointment}
+		maps.Copy(given, params)
+		if _, err := shop.Apply(t.Context(), engine.CallInput{Resource: "kennels", ID: kennel, Call: "report", Params: given}); err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		return shop
+	}
+
+	t.Run("a flag that was not given is not true", func(t *testing.T) {
+		shop := report(t, map[string]any{"text": "Hello"})
+		wantRequests(t, shop.api,
+			"POST "+notes+` {"text":"Hello"}`,
+			"POST "+notes+` {"text":"after 0a0a0a01"}`,
+			"POST "+notes+` {"text":"last"}`,
+			reported+` {"text":"Hello"}`)
+	})
+
+	// The second step uses what the first would have kept, so it does not
+	// run either; the third has nothing to do with them.
+	t.Run("a step that does not run takes the steps that use it along", func(t *testing.T) {
+		shop := report(t, map[string]any{"text": "Hello", "quiet": true})
+		wantRequests(t, shop.api, "POST "+notes+` {"text":"last"}`, reported+` {"text":"Hello"}`)
+	})
+
+	t.Run("no step runs when no condition holds", func(t *testing.T) {
+		shop := report(t, map[string]any{"text": "Bye", "quiet": true})
+		wantRequests(t, shop.api, reported+` {"text":"Bye"}`)
+	})
+
+	opened := "POST " + adminAPI + `/kennels {"name":"north"}`
+	shut := func(t *testing.T, params map[string]any) *shop {
+		t.Helper()
+		shop := callShop(t, nil, whenOverlay)
+		shop.api.Handle("POST", adminAPI+"/kennels", apitest.Response{Body: map[string]any{"id": appointment}})
+		shop.api.Handle("POST", notes, apitest.Response{Sequence: []apitest.Response{
+			{Body: map[string]any{"noteId": "0a0a0a01"}}, {Body: map[string]any{"noteId": "0a0a0a02"}},
+			{Body: map[string]any{"noteId": "0a0a0a03"}},
+		}})
+		given := map[string]any{"name": "north"}
+		maps.Copy(given, params)
+		if _, err := shop.Apply(t.Context(), engine.CallInput{Resource: "kennels", Call: "shut", Params: given}); err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		return shop
+	}
+
+	t.Run("the steps after the request run under their conditions", func(t *testing.T) {
+		shop := shut(t, nil)
+		wantRequests(t, shop.api, opened,
+			"POST "+notes+` {"text":"one"}`,
+			"POST "+notes+` {"text":"after 0a0a0a01"}`,
+			"POST "+notes+` {"text":"three"}`)
+	})
+
+	t.Run("the steps after the request that do not run are left out", func(t *testing.T) {
+		shop := shut(t, map[string]any{"quiet": true})
+		wantRequests(t, shop.api, opened, "POST "+notes+` {"text":"three"}`)
+	})
+
+	t.Run("an answer without an ID is enough when no step after it runs", func(t *testing.T) {
+		shop := callShop(t, nil, whenOverlay)
+		shop.api.Handle("POST", adminAPI+"/kennels", noContent)
+		_, err := shop.Apply(t.Context(), engine.CallInput{Resource: "kennels", Call: "close", Params: map[string]any{"name": "north", "quiet": true}})
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		wantRequests(t, shop.api, opened)
+	})
+
+	t.Run("a step after the request that uses a step before it runs along", func(t *testing.T) {
+		shop := shut(t, map[string]any{"quiet": true, "loud": true})
+		wantRequests(t, shop.api,
+			"POST "+notes+` {"text":"shout"}`,
+			opened,
+			"POST "+notes+` {"text":"echo 0a0a0a01"}`,
+			"POST "+notes+` {"text":"three"}`)
+	})
+}
