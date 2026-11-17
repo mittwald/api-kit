@@ -95,6 +95,20 @@ $ example get pets 0a1b2c3e -o json
 with joins, ID aliases, calls that change data and a test that runs it
 against a fake API.
 
+A tool built this way keeps its error stream safe to show: errors, warnings
+and the `--verbose` log are plain text, and credentials they can be seen to
+hold, such as the value of a `password` or `token` field or a Bearer token,
+are replaced by `[REDACTED]`. Results go to the output stream as the API
+returned them. `--links` makes the first column of a table a link on a
+terminal unless `NO_COLOR` or `TERM=dumb` is set. Set
+`cli.Options.CompletionInstall` to give `completion bash|zsh|fish` an
+`--install` flag that writes the script where the shell loads it from.
+
+Sessions are kept in the keyring of the operating system, with files as a
+fallback, unless `cli.Options.Store` names another store. `auth.ErrNotFound`
+is cli-kit's `secret.ErrNotFound`, so any store of cli-kit's `secret`
+package, such as `secret.NewMemory` in tests, can be passed as it is.
+
 ## Versioning
 
 api-kit follows [semantic versioning](https://semver.org). While it is

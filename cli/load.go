@@ -33,7 +33,7 @@ func (a *App) load(root *cobra.Command, override bool) (*definition.Document, er
 	}
 	doc, warnings, err := definition.Load(a.opts.Definition, options)
 	for _, warning := range warnings {
-		writeLine(a.opts.Streams.Err, "WARNING: "+warning.Source+": "+warning.String())
+		writeLine(a.errs, "WARNING: "+warning.Source+": "+warning.String())
 	}
 	if err != nil {
 		return nil, err
@@ -58,11 +58,11 @@ func (a *App) tune(settings *definition.HTTP) {
 		value, err := strconv.ParseFloat(raw, 64)
 		switch {
 		case err != nil || math.IsNaN(value) || math.IsInf(value, 0):
-			writeLine(a.opts.Streams.Err, "WARNING: Ignoring environment variable "+name+"="+strconv.Quote(raw)+": expected a number")
+			writeLine(a.errs, "WARNING: Ignoring environment variable "+name+"="+strconv.Quote(raw)+": expected a number")
 		case whole && value != math.Trunc(value):
-			writeLine(a.opts.Streams.Err, "WARNING: Ignoring environment variable "+name+"="+strconv.Quote(raw)+": expected a whole number")
+			writeLine(a.errs, "WARNING: Ignoring environment variable "+name+"="+strconv.Quote(raw)+": expected a whole number")
 		case value < minimum:
-			writeLine(a.opts.Streams.Err, "WARNING: Ignoring environment variable "+name+"="+strconv.Quote(raw)+": must be at least "+strconv.FormatFloat(minimum, 'g', -1, 64))
+			writeLine(a.errs, "WARNING: Ignoring environment variable "+name+"="+strconv.Quote(raw)+": must be at least "+strconv.FormatFloat(minimum, 'g', -1, 64))
 		default:
 			return value, true
 		}

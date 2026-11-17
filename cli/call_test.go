@@ -406,6 +406,19 @@ func TestCompleteLookups(t *testing.T) {
 		t.Errorf("lookup = %v", offers)
 	}
 
+	// Names the shell could not hand on as they are, or that would write
+	// escape sequences to the terminal, are not offered.
+	hostile := groomer(t)
+	hostile.api.Handle("GET", adminAPI+"/owners?city=Linz&limit=100&skip=0", apitest.Response{Body: raw(`[
+		{"id": "11111111", "name": "Ada"},
+		{"id": "22222222", "name": "A\u001b]52;c;aGk=\u0007x"},
+		{"id": "33333333", "name": "A\tb"},
+		{"id": "44444444", "name": "A\nb"},
+		{"id": "55555555", "name": "A\u009b31m"}]`)})
+	if offers, _ = complete(t, hostile, "--token", "secret", "rename", "pets", "0a1b2c3d", "--vet", "A"); !slices.Equal(offers, []string{"Ada"}) {
+		t.Errorf("lookup with control characters = %q", offers)
+	}
+
 	// Without a token nothing is asked of the API, and nobody is asked for
 	// a password.
 	quiet := groomer(t)

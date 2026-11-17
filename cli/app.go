@@ -15,6 +15,7 @@ import (
 	"github.com/mittwald/cli-kit/buildinfo"
 	"github.com/mittwald/cli-kit/cobrax"
 	"github.com/mittwald/cli-kit/live"
+	"github.com/mittwald/cli-kit/secret"
 	"github.com/mittwald/cli-kit/term"
 
 	apikit "github.com/mittwald/api-kit"
@@ -86,25 +87,28 @@ type Options struct {
 	// Commands are commands of the host, added next to the generated ones.
 	Commands []CommandFactory
 	// FlagAliases are older spellings of options every command has. They
-	// keep working, are not shown in help, and tell the user about the
-	// spelling to use instead.
+	// keep working, are not shown in help or completion, and tell the user
+	// once per run about the spelling to use instead, unless they are
+	// Silent.
 	FlagAliases []FlagAlias
+	// CompletionInstall gives the bash, zsh and fish commands of
+	// "completion" an --install flag, which writes the script to the
+	// directory of the current user that the shell loads completion scripts
+	// from instead of printing it (see cobrax.AddCompletionInstall). It is
+	// off by default, since it makes the tool write files outside its own
+	// configuration: a tool whose packages install the scripts may not want
+	// a second copy.
+	CompletionInstall bool
 }
 
 // FlagAlias is an older spelling of an option every command has: a switch
 // that stands for an option with a value, as --no-colors stands for
-// --color=never.
-type FlagAlias struct {
-	// Old is the name of the switch, without dashes.
-	Old string
-	// New is the name of the option it stands for.
-	New string
-	// Value is the value it gives that option.
-	Value string
-	// Silent keeps the user from being told about the replacement, for a
-	// spelling that is as good as the new one.
-	Silent bool
-}
+// --color=never. It is the alias of cli-kit's cobrax.FlagAlias, which
+// registers it: giving the switch sets the option as if --New=Value had
+// been given, --Old=false does nothing, and unless Silent is set the first
+// use writes "WARNING: --Old is deprecated, use --New=Value" to the error
+// stream.
+type FlagAlias = cobrax.FlagAlias
 
 // App is a tool built from [Options].
 type App struct {
@@ -114,6 +118,9 @@ type App struct {
 	globals *globals
 	// out wraps the output stream to know whether anything was printed.
 	out *tracker
+	// errs wraps the error stream to take the status line off the terminal
+	// before anything is written to it.
+	errs *errStream
 	// hasLogin says whether the definition describes a way to log in.
 	hasLogin bool
 	// current is the session of this run, made when a command first needs
@@ -177,7 +184,9 @@ func Run(ctx context.Context, o Options, args []string) int {
 // definition is loaded and so has to be known before the commands exist.
 func (a *App) Build(args []string) (*cobra.Command, error) {
 	a.globals = &globals{}
-	a.out = &tracker{w: a.opts.Streams.Out}
+	a.out = &tracker{w: a.opts.Streams.Out, hold: a.holdStatus}
+	a.errs = &errStream{w: a.opts.Streams.Err, hold: a.holdStatus}
+	a.status = nil
 	a.current, a.told = nil, map[string]bool{}
 
 	root := &cobra.Command{
@@ -197,7 +206,7 @@ func (a *App) Build(args []string) (*cobra.Command, error) {
 	}
 	root.SetIn(a.opts.Streams.In)
 	root.SetOut(a.out)
-	root.SetErr(a.opts.Streams.Err)
+	root.SetErr(a.errs)
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
 		return apikit.Errorf(apikit.KindUsage, "%w", err)
 	})
@@ -226,7 +235,10 @@ func (a *App) Build(args []string) (*cobra.Command, error) {
 
 	cobrax.NoFileCompletions(root)
 	cobrax.NoFileArgs(root)
-	cobrax.HardenCompletion(root)
+	completion := cobrax.HardenCompletion(root)
+	if a.opts.CompletionInstall {
+		cobrax.AddCompletionInstall(completion)
+	}
 	return root, nil
 }
 
@@ -265,7 +277,7 @@ func (a *App) report(cmd *cobra.Command, err error) int {
 	if silent, ok := errors.AsType[errSilent](err); ok {
 		return silent.code
 	}
-	w := a.opts.Streams.Err
+	w := a.errStream()
 	kind := kindOf(err)
 	switch kind {
 	case apikit.KindSkipped:
@@ -326,39 +338,83 @@ type errSilent struct {
 
 func (e errSilent) Error() string { return "exit" }
 
-// writeLine writes text and a newline. A failed write to the error stream
-// has nowhere to be reported, so it is ignored.
-// writeLine writes a line of what the tool has to say: an error, a warning,
-// a hint, a line of the log. Such a line is for a person, wherever the
-// stream leads, and much of it is not the tool's own words: the message of
-// an error is often what the API answered. Its escape sequences and control
-// characters are left out, so that nothing in it can clear the screen, write
-// to the clipboard or pass a word off as the tool's own, also once a log it
-// was kept in is shown.
+// writeLine writes a line of what the tool has to say, and a newline: an
+// error, a warning, a hint, a line of the log. Such a line is for a person,
+// wherever the stream leads, and much of it is not the tool's own words:
+// the message of an error is often what the API answered. Its escape
+// sequences and control characters are left out, so that nothing in it can
+// clear the screen, write to the clipboard or pass a word off as the tool's
+// own, also once a log it was kept in is shown. Credentials it can be seen
+// to hold, such as "password": "…", a Bearer token or a token whose prefix
+// names its issuer, are replaced by [REDACTED] (secret.RedactPatterns), so
+// an API that repeats what it was sent does not put a secret on the screen
+// or into a log. A failed write to the error stream has nowhere to be
+// reported, so it is ignored.
 func writeLine(w io.Writer, text string) {
+	_, _ = io.WriteString(w, secret.RedactPatterns(term.Plain(text))+"\n")
+}
+
+// writeNotice writes a line the tool has for the user that the user has to
+// read as it is: a notice of package auth, such as the address of the
+// login page to visit when no browser opens, or the hint of a prompt. Its
+// escape sequences and control characters are left out as writeLine
+// leaves them out, but nothing is redacted, since a redacted address would
+// lead nowhere. Such a line holds what the definition and the tool say,
+// not what an API answered.
+func writeNotice(w io.Writer, text string) {
 	_, _ = io.WriteString(w, term.Plain(text)+"\n")
 }
+
+// errStream returns the error stream of the run, which takes the status
+// line off the terminal before it writes, or the stream itself before a
+// command line was built.
+func (a *App) errStream() io.Writer {
+	if a.errs == nil {
+		return a.opts.Streams.Err
+	}
+	return a.errs
+}
+
+// holdStatus calls write, which writes to the terminal, with the status
+// line taken off it, if there is one.
+func (a *App) holdStatus(write func()) { a.status.hold(write) }
 
 // tracker passes writes through and remembers whether anything but white
 // space was written, for --fail-empty.
 type tracker struct {
 	w       io.Writer
 	printed bool
-	// before is called ahead of every write, to take a status line off the
-	// terminal that the output would otherwise run into.
-	before func()
+	// hold makes a write, taking a status line off the terminal that the
+	// output would otherwise run into.
+	hold func(write func())
 }
 
 // Unwrap returns the stream behind the tracker, so that code that asks
 // whether the output is a terminal sees the real one.
 func (t *tracker) Unwrap() io.Writer { return t.w }
 
-func (t *tracker) Write(p []byte) (int, error) {
-	if t.before != nil {
-		t.before()
-	}
+func (t *tracker) Write(p []byte) (n int, err error) {
 	if !t.printed && strings.TrimSpace(string(p)) != "" {
 		t.printed = true
 	}
-	return t.w.Write(p)
+	t.hold(func() { n, err = t.w.Write(p) })
+	return n, err
+}
+
+// errStream is the error stream of a run: it passes writes through and
+// takes a status line off the terminal before each, so that an error, a
+// warning or a line of the log is not drawn over by the next report of
+// the status line, nor the status line left behind above it.
+type errStream struct {
+	w    io.Writer
+	hold func(write func())
+}
+
+// Unwrap returns the stream behind, so that code that asks whether the
+// error stream is a terminal sees the real one.
+func (e *errStream) Unwrap() io.Writer { return e.w }
+
+func (e *errStream) Write(p []byte) (n int, err error) {
+	e.hold(func() { n, err = e.w.Write(p) })
+	return n, err
 }

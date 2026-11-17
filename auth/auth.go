@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mittwald/cli-kit/secret"
+
 	apikit "github.com/mittwald/api-kit"
 	"github.com/mittwald/api-kit/definition"
 	"github.com/mittwald/api-kit/expr"
@@ -39,10 +41,12 @@ type Store interface {
 // run then goes on without a stored session, the error is logged as a
 // warning, and [Manager.Logout] returns it.
 //
-// A Store of another library reports an absent account with an error of its
-// own, which a Manager takes for a broken store. Wrap such a Store, so that
-// Get and Delete return ErrNotFound in place of that error.
-var ErrNotFound = errors.New("auth: nothing is stored for the account")
+// ErrNotFound is secret.ErrNotFound of cli-kit, so a store of package
+// secret, such as secret.Keyring, secret.FileStore or secret.NewMemory, is a
+// Store as it is. A Store of another library that reports an absent account
+// with an error of its own, which a Manager takes for a broken store, needs
+// a wrapper whose Get and Delete return ErrNotFound in place of that error.
+var ErrNotFound = secret.ErrNotFound
 
 // Doer sends an HTTP request. An [*http.Client] is one.
 type Doer interface {

@@ -84,6 +84,11 @@ func (r *callRun) resolveLookups(ctx context.Context, setters []*definition.Sett
 // while a parameter the lookup depends on is not given yet. Completion
 // must not disturb the command line, so its caller offers nothing on an
 // error.
+//
+// The values are the API's, as it returned them. A shell writes a
+// candidate to the terminal as it is, so a caller leaves out those it
+// cannot hand on safely, as package cli does with cobrax.SafeCompletions of
+// cli-kit.
 func (e *Engine) CompleteLookup(ctx context.Context, resource, call, parameter string, params map[string]any, prefix string) ([]string, error) {
 	described, ok := e.doc.Call(resource, call)
 	if !ok {

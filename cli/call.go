@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/mittwald/cli-kit/cobrax"
 	"github.com/mittwald/cli-kit/term"
 
 	apikit "github.com/mittwald/api-kit"
@@ -382,24 +383,23 @@ func (a *App) showCall(cmd *cobra.Command, session *session, call *definition.Ca
 		return nil
 	}
 	w := cmd.OutOrStdout()
+	// A message names what the API returned, and the parameters of a dry
+	// run hold values it returned, such as an ID resolved from a name. A
+	// program reading the output gets them as they are; on a terminal their
+	// escape sequences and control characters are left out, as in every
+	// format that writes lines. The YAML of a dry run does not escape them.
+	plain := term.IsTerminal(w)
 	if result.DryRun != nil {
 		for _, parameter := range result.DryRun {
-			if _, err := fmt.Fprintln(w, dryRunLine(parameter)); err != nil {
+			if _, err := fmt.Fprintln(w, shownLine(dryRunLine(parameter), plain)); err != nil {
 				return failed(err)
 			}
 		}
-		writeLine(a.opts.Streams.Err, "Dry run, "+call.Name+" was not sent")
+		writeLine(a.errs, "Dry run, "+call.Name+" was not sent")
 		return nil
 	}
-	// A message names what the API returned. A program reading the output
-	// gets it as it is; on a terminal its escape sequences and control
-	// characters are left out, as in every format that writes lines.
-	plain := term.IsTerminal(w)
 	for _, message := range result.Messages {
-		if plain {
-			message = term.Plain(message)
-		}
-		if _, err := fmt.Fprintln(w, message); err != nil {
+		if _, err := fmt.Fprintln(w, shownLine(message, plain)); err != nil {
 			return failed(err)
 		}
 	}
@@ -407,6 +407,16 @@ func (a *App) showCall(cmd *cobra.Command, session *session, call *definition.Ca
 		return nil
 	}
 	return a.render(cmd, session, &engine.Result{Resource: result.Resource, Value: result.Body}, view{spec: spec})
+}
+
+// shownLine returns text to be written as lines to the output stream:
+// as it is for a program, or as plain text, without escape sequences and
+// control characters but the newline, for a terminal.
+func shownLine(text string, plain bool) string {
+	if plain {
+		return term.Plain(text)
+	}
+	return text
 }
 
 // dryRunLine writes a parameter of a dry run as YAML: its name and the
@@ -489,6 +499,6 @@ func completeChoices(call *definition.Call, parameter *definition.Parameter) cob
 		if len(choices) == 0 {
 			choices = allChoices(parameter)
 		}
-		return startingWith(choices, typed)
+		return cobrax.CompletePrefix(choices, typed)
 	}
 }

@@ -11,10 +11,10 @@ import (
 	"testing"
 
 	"github.com/mittwald/cli-kit/buildinfo"
+	"github.com/mittwald/cli-kit/secret"
 
 	apikit "github.com/mittwald/api-kit"
 	"github.com/mittwald/api-kit/apitest"
-	"github.com/mittwald/api-kit/auth"
 	"github.com/mittwald/api-kit/cli"
 	"github.com/mittwald/api-kit/definition"
 )
@@ -47,7 +47,7 @@ func newTool(t *testing.T) *tool {
 		Build:      buildinfo.Info{Version: "v1.2.3"},
 		Definition: definition.Source{Name: "petshop.yaml", Data: []byte(apitest.PetShop)},
 		EnvPrefix:  "SHOP",
-		Store:      memory{},
+		Store:      secret.NewMemory(nil),
 		HTTP:       api.Client(),
 		Getenv:     func(name string) string { return h.env[name] },
 	}
@@ -85,30 +85,6 @@ func (h *tool) overlay(content string) string {
 // raw is a response body given as JSON text, so that the order of its keys
 // is the one written.
 func raw(text string) json.RawMessage { return json.RawMessage(text) }
-
-// memory is a session store that forgets everything with the test.
-type memory map[string]string
-
-func (m memory) Get(account string) (string, error) {
-	value, ok := m[account]
-	if !ok {
-		return "", auth.ErrNotFound
-	}
-	return value, nil
-}
-
-func (m memory) Set(account, value string) error {
-	m[account] = value
-	return nil
-}
-
-func (m memory) Delete(account string) error {
-	if _, ok := m[account]; !ok {
-		return auth.ErrNotFound
-	}
-	delete(m, account)
-	return nil
-}
 
 // bare is a tool without a definition: it has only the commands every tool
 // has.
@@ -210,6 +186,35 @@ func TestCompletionScripts(t *testing.T) {
 				t.Errorf("the %s script lacks %q, or stderr is not empty: %q", shell, marker, stderr)
 			}
 		})
+	}
+}
+
+func TestCompletionInstall(t *testing.T) {
+	data := t.TempDir()
+	t.Setenv("BASH_COMPLETION_USER_DIR", "")
+	t.Setenv("XDG_DATA_HOME", data)
+
+	// Without the option the completion command writes no files.
+	if _, stderr, code := bare(t, "completion", "bash", "--install"); code != apikit.ExitUsage || !strings.Contains(stderr, "--install") {
+		t.Errorf("--install without CompletionInstall: exit code = %d, stderr = %q", code, stderr)
+	}
+
+	var out, errOut bytes.Buffer
+	app := cli.New(cli.Options{
+		Name:              "example",
+		Build:             buildinfo.Info{Version: "v1.2.3"},
+		Streams:           cli.Streams{In: strings.NewReader(""), Out: &out, Err: &errOut},
+		CompletionInstall: true,
+	})
+	if code := app.Execute(context.Background(), []string{"completion", "bash", "--install"}); code != apikit.ExitOK {
+		t.Fatalf("exit code = %d, stderr = %q", code, errOut.String())
+	}
+	path := filepath.Join(data, "bash-completion", "completions", "example")
+	if out.String() != "Installed bash completion to "+path+"\n" {
+		t.Errorf("stdout = %q", out.String())
+	}
+	if script, err := os.ReadFile(path); err != nil || !strings.Contains(string(script), "__start_example") {
+		t.Errorf("the script at %s: %v", path, err)
 	}
 }
 

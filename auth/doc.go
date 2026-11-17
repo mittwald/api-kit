@@ -73,8 +73,9 @@
 // is in UTC.
 //
 // A Store tells a Manager that it holds nothing for an account with
-// [ErrNotFound]. A Store of another library has an error of its own for
-// that and needs a wrapper:
+// [ErrNotFound], which is secret.ErrNotFound of cli-kit: the stores of
+// package secret plug in as they are. A Store of another library has an
+// error of its own for that and needs a wrapper:
 //
 //	func (s store) Get(account string) (string, error) {
 //		value, err := s.inner.Get(account)
