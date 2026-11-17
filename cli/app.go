@@ -15,7 +15,7 @@ import (
 	"github.com/mittwald/cli-kit/buildinfo"
 	"github.com/mittwald/cli-kit/cobrax"
 	"github.com/mittwald/cli-kit/live"
-	"github.com/mittwald/cli-kit/secret"
+	"github.com/mittwald/cli-kit/redact"
 	"github.com/mittwald/cli-kit/term"
 
 	apikit "github.com/mittwald/api-kit"
@@ -346,12 +346,12 @@ func (e errSilent) Error() string { return "exit" }
 // clear the screen, write to the clipboard or pass a word off as the tool's
 // own, also once a log it was kept in is shown. Credentials it can be seen
 // to hold, such as "password": "…", a Bearer token or a token whose prefix
-// names its issuer, are replaced by [REDACTED] (secret.RedactPatterns), so
+// names its issuer, are replaced by [REDACTED] (redact.Patterns), so
 // an API that repeats what it was sent does not put a secret on the screen
 // or into a log. A failed write to the error stream has nowhere to be
 // reported, so it is ignored.
 func writeLine(w io.Writer, text string) {
-	_, _ = io.WriteString(w, secret.RedactPatterns(term.Plain(text))+"\n")
+	_, _ = io.WriteString(w, redact.Patterns(term.Plain(text))+"\n")
 }
 
 // writeNotice writes a line the tool has for the user that the user has to
