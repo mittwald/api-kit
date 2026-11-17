@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	apikit "github.com/mittwald/api-kit"
+	"github.com/mittwald/api-kit/expr"
 )
 
 // Defaults of the tuning sections.
@@ -694,8 +695,49 @@ func (l *loader) step(path string, value any) *Step {
 	if parameters, ok := m.child("parameters"); ok {
 		step.Parameters = parameters.object
 	}
+	for i, item := range m.items("when") {
+		if condition, ok := l.stepCondition(index(m.at("when"), i), item); ok {
+			step.When = append(step.When, condition)
+		}
+	}
 	m.finish()
 	return step
+}
+
+// stepCondition decodes a condition of a step. The path starts with the
+// name of the value to test; a field inside that value may follow.
+func (l *loader) stepCondition(path string, value any) (StepCondition, bool) {
+	source, ok := value.(string)
+	if !ok {
+		l.problemf(path, "must be a string, not %s", kindOf(value))
+		return StepCondition{}, false
+	}
+	parsed, err := expr.ParseCondition(source)
+	if err != nil {
+		l.problemf(path, "%v", err)
+		return StepCondition{}, false
+	}
+	condition := StepCondition{Condition: parsed}
+	end := strings.IndexAny(parsed.Path, ".[")
+	if end < 0 {
+		end = len(parsed.Path)
+	}
+	condition.Name = parsed.Path[:end]
+	rest := parsed.Path[end:]
+	switch {
+	case condition.Name == "":
+		l.problemf(path, "condition %q must start with the name of a value", source)
+		return StepCondition{}, false
+	case strings.HasPrefix(rest, "["):
+		l.problemf(path, "condition %q: a filter cannot follow the name of a value, only a field inside it", source)
+		return StepCondition{}, false
+	case rest != "":
+		if condition.Field, err = expr.ParsePath(rest[1:]); err != nil {
+			l.problemf(path, "condition %q: %v", source, err)
+			return StepCondition{}, false
+		}
+	}
+	return condition, true
 }
 
 // sameSet reports whether two lists hold the same names, in any order.

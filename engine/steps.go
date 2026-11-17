@@ -46,6 +46,11 @@ func (r *callRun) stepsKey(setter *definition.Setter, vals values) string {
 	for _, step := range setter.Steps {
 		fmt.Fprintf(&key, " %q %q %q %q %q %q %q %t %q %s", step.As, step.Get, step.Call, step.Resource,
 			step.ID, step.Sub, step.Filters, step.First, step.Select, apikit.Text(step.Parameters))
+		// What the conditions test decides which steps run.
+		for _, condition := range step.When {
+			value, _ := vals.get(condition.Name)
+			fmt.Fprintf(&key, " %q %s", condition.Source, apikit.Text(value))
+		}
 	}
 	for _, parameter := range setter.StepParameters {
 		value, _ := vals.get(parameter.Name)
@@ -73,7 +78,12 @@ func (r *callRun) runSteps(ctx context.Context, setter *definition.Setter, vals 
 		secret = append(secret, variableKey(placeholder.Name))
 	}
 	kept := values{}
+	var skipped []string
 	for _, step := range setter.Steps {
+		if !stepRuns(step, vals, skipped) {
+			skipped = append(skipped, step.As)
+			continue
+		}
 		var item any
 		var err error
 		if step.Get != "" {
@@ -268,13 +278,26 @@ func (r *callRun) thenSteps(ctx context.Context, setter *definition.Setter, vals
 	object, _ := answer.(*apikit.Object)
 	found, _ := r.e.idValue(resource, object)
 	result := idText(found)
-	if result == "" {
-		return apikit.Errorf(apikit.KindFailed, "%s succeeded, but its response has no ID for the steps after it", r.call.Name)
-	}
 	vals = maps.Clone(vals)
-	vals.set(definition.VariableResult, result)
-	var earlier []string
+	if result != "" {
+		vals.set(definition.VariableResult, result)
+	}
+	// A step before the request that kept nothing did not run.
+	var earlier, skipped []string
+	for _, step := range setter.Steps {
+		if !vals.has(step.As) {
+			skipped = append(skipped, step.As)
+		}
+	}
 	for _, step := range setter.Then {
+		if !stepRuns(step, vals, skipped) {
+			skipped = append(skipped, step.As)
+			continue
+		}
+		// Only a step that runs needs the ID.
+		if result == "" {
+			return apikit.Errorf(apikit.KindFailed, "%s succeeded, but its response has no ID for the steps after it", r.call.Name)
+		}
 		if err := r.thenStep(ctx, step, vals, earlier); err != nil {
 			return &apikit.Error{
 				Kind: apikit.KindOf(err),
@@ -307,14 +330,33 @@ func (r *callRun) thenStep(ctx context.Context, step *definition.Step, vals valu
 	return nil
 }
 
-// stepUses reports whether a call step has a placeholder of that name.
+// stepRuns reports whether a step runs: when all its conditions hold, and
+// it uses nothing that a step which did not run would have kept.
+func stepRuns(step *definition.Step, vals values, skipped []string) bool {
+	for _, name := range skipped {
+		if stepUses(step, name) {
+			return false
+		}
+	}
+	for _, condition := range step.When {
+		value, _ := vals.get(condition.Name)
+		if !expr.Holds(condition.Field.Get(value, ""), condition.Op, condition.Value) {
+			return false
+		}
+	}
+	return true
+}
+
+// stepUses reports whether a step has a placeholder of that name, in
+// either form.
 func stepUses(step *definition.Step, name string) bool {
 	var uses func(value any) bool
 	uses = func(value any) bool {
 		switch value := value.(type) {
 		case string:
 			return slices.ContainsFunc(expr.ParseTemplate(value).Placeholders(), func(placeholder expr.Placeholder) bool {
-				return placeholder.Braced && variableKey(placeholder.Name) == variableKey(name)
+				// Rendering fills $name in as well as ${name}.
+				return variableKey(placeholder.Name) == variableKey(name)
 			})
 		case []any:
 			return slices.ContainsFunc(value, uses)
@@ -327,5 +369,7 @@ func stepUses(step *definition.Step, name string) bool {
 		}
 		return false
 	}
-	return uses(step.ID) || uses(step.Parameters)
+	return uses(step.ID) || uses(step.Parameters) || slices.ContainsFunc(step.Filters, func(filter string) bool {
+		return uses(filter)
+	})
 }
