@@ -146,6 +146,9 @@ func (a *App) callLeaf(doc *definition.Document, call *definition.Call, use stri
 	options := map[string][]string{} // parameter name -> the options that give it
 	for _, parameter := range call.Parameters {
 		help := parameter.Help
+		if parameter.Type == definition.TypeTime {
+			help = strings.TrimSpace(help + " " + timeHelp(parameter))
+		}
 		if parameter.Required && !call.Shared() {
 			help = strings.TrimSpace(help + " (required)")
 		}
@@ -154,7 +157,7 @@ func (a *App) callLeaf(doc *definition.Document, call *definition.Call, use stri
 			names = parameter.OptionNames()
 		}
 		for i, name := range names {
-			addParameterFlag(flags, name, parameter.Type, help)
+			addParameterFlag(flags, name, parameter, help)
 			if i > 0 {
 				flags.Lookup(name).Hidden = true
 			}
@@ -170,6 +173,11 @@ func (a *App) callLeaf(doc *definition.Document, call *definition.Call, use stri
 				_ = command.RegisterFlagCompletionFunc(name, completeChoices(call, parameter))
 			}
 		}
+		if parameter.Type == definition.TypeTime {
+			for _, name := range names {
+				_ = command.RegisterFlagCompletionFunc(name, completeTime(parameter))
+			}
+		}
 	}
 	for _, parameter := range call.StepParameters {
 		names := []string{parameter.Name}
@@ -177,7 +185,7 @@ func (a *App) callLeaf(doc *definition.Document, call *definition.Call, use stri
 			names = parameter.OptionNames()
 		}
 		for i, name := range names {
-			addParameterFlag(flags, name, parameter.Type, strings.TrimSpace(parameter.Help+" (default: "+apikit.Text(parameter.Default)+")"))
+			addParameterFlag(flags, name, parameter, strings.TrimSpace(parameter.Help+" (default: "+apikit.Text(parameter.Default)+")"))
 			if i > 0 {
 				flags.Lookup(name).Hidden = true
 			}
@@ -243,22 +251,25 @@ func (a *App) callLeaf(doc *definition.Document, call *definition.Call, use stri
 
 // addParameterFlag adds the option of a parameter with the type of its
 // value.
-func addParameterFlag(flags *pflag.FlagSet, name string, kind definition.ParamType, help string) {
+func addParameterFlag(flags *pflag.FlagSet, name string, parameter *definition.Parameter, help string) {
 	// A word in backquotes would be taken for the name of the value.
 	help = strings.ReplaceAll(help, "`", "'")
-	switch kind {
-	case definition.TypeInt:
-		flags.Int64(name, 0, help)
-	case definition.TypeFloat:
-		flags.Float64(name, 0, help)
-	case definition.TypeBool:
-		flags.Bool(name, false, help)
-	case definition.TypeList:
+	switch kind := parameter.Type; {
+	case parameter.TakesList():
 		flags.StringArray(name, nil, help)
 		// Several values may follow the option at once.
 		flags.Lookup(name).Annotations = map[string][]string{argv.AnnotationWords: {argv.WordsRepeat}}
+	case kind == definition.TypeInt:
+		flags.Int64(name, 0, help)
+	case kind == definition.TypeFloat:
+		flags.Float64(name, 0, help)
+	case kind == definition.TypeBool:
+		flags.Bool(name, false, help)
 	default:
 		flags.String(name, "", help)
+	}
+	if parameter.Type == definition.TypeFile {
+		_ = flags.SetAnnotation(name, cobra.BashCompFilenameExt, []string{})
 	}
 }
 
@@ -274,20 +285,20 @@ func givenParameters(flags *pflag.FlagSet, call *definition.Call, options map[st
 			}
 			var value any
 			var err error
-			switch parameter.Type {
-			case definition.TypeInt:
+			switch kind := parameter.Type; {
+			case parameter.TakesList():
+				value, err = flags.GetStringArray(name)
+			case kind == definition.TypeInt:
 				value, err = flags.GetInt64(name)
-			case definition.TypeFloat:
+			case kind == definition.TypeFloat:
 				value, err = flags.GetFloat64(name)
-			case definition.TypeBool:
+			case kind == definition.TypeBool:
 				// A flag is given or not: --flag=false is not given.
 				given, getErr := flags.GetBool(name)
 				if err = getErr; !given {
 					continue
 				}
 				value = true
-			case definition.TypeList:
-				value, err = flags.GetStringArray(name)
 			default:
 				value, err = flags.GetString(name)
 			}
@@ -389,6 +400,9 @@ func (a *App) showCall(cmd *cobra.Command, session *session, call *definition.Ca
 	// escape sequences and control characters are left out, as in every
 	// format that writes lines. The YAML of a dry run does not escape them.
 	plain := term.IsTerminal(w)
+	for _, warning := range result.Warnings {
+		writeLine(a.errs, "WARNING: "+warning)
+	}
 	if result.DryRun != nil {
 		for _, parameter := range result.DryRun {
 			if _, err := fmt.Fprintln(w, shownLine(dryRunLine(parameter), plain)); err != nil {
@@ -462,6 +476,36 @@ func yamlValue(v any) any {
 		return entries
 	}
 	return v
+}
+
+// timeHelp says what a parameter of type time takes.
+func timeHelp(parameter *definition.Parameter) string {
+	help := "(an ISO 8601 time such as 2006-01-02T15:04, or now, today, tomorrow or +N with m, h, d or w, " +
+		"optionally followed by a time of day such as 08:00"
+	if len(parameter.Presets) > 0 {
+		var names []string
+		for _, preset := range parameter.Presets {
+			names = append(names, preset.Key)
+		}
+		help += "; or one of " + strings.Join(names, ", ")
+	}
+	if parameter.Timezone != "" {
+		help += "; in " + parameter.Timezone
+	}
+	return help + ")"
+}
+
+// completeTime offers the presets of a parameter of type time, and the
+// words a time may start with.
+func completeTime(parameter *definition.Parameter) cobra.CompletionFunc {
+	return func(_ *cobra.Command, _ []string, typed string) ([]cobra.Completion, cobra.ShellCompDirective) {
+		var words []string
+		for _, preset := range parameter.Presets {
+			words = append(words, preset.Key)
+		}
+		words = append(words, "now", "today", "tomorrow")
+		return cobrax.CompletePrefix(words, typed)
+	}
 }
 
 // allChoices returns every value a parameter can take, whatever the other

@@ -94,6 +94,7 @@ func (a *App) session(doc *definition.Document) (*session, error) {
 		Progress:    a.status.report,
 		Stdin:       a.opts.Streams.In,
 		Templates:   a.opts.Templates,
+		Formats:     a.opts.Formats,
 	})
 	if err != nil {
 		return nil, failed(err)

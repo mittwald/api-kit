@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	apikit "github.com/mittwald/api-kit"
 	"github.com/mittwald/api-kit/expr"
@@ -483,7 +484,27 @@ func (l *loader) setter(path string, value any) *Setter {
 		PathTemplate: m.text("pathTemplate", ""),
 		Message:      m.text("message", ""),
 		Token:        m.text("token", ""),
+		Headers:      m.pairs("headers"),
+		Encoding:     m.text("encoding", EncodingJSON),
 		path:         path,
+	}
+	switch setter.Encoding {
+	case EncodingJSON:
+	case EncodingMultipart:
+		if payload, ok := m.get("payloadTemplate"); ok {
+			fields, isMapping := payload.(*apikit.Object)
+			if !isMapping {
+				l.problemf(m.at("payloadTemplate"), "must be a mapping for encoding %s", EncodingMultipart)
+				break
+			}
+			for key := range fields.All() {
+				if len(expr.ParseTemplate(key).Placeholders()) > 0 {
+					l.problemf(join(m.at("payloadTemplate"), key), "the name of a field of a form cannot be a template")
+				}
+			}
+		}
+	default:
+		l.problemf(m.at("encoding"), "must be %s or %s, not %q", EncodingJSON, EncodingMultipart, setter.Encoding)
 	}
 	if payload, ok := m.get("payloadTemplate"); ok {
 		switch payload.(type) {
@@ -559,16 +580,38 @@ func (l *loader) parameter(path string, value any, step bool) *Parameter {
 	parameter.Template = m.flag("template", false)
 	parameter.MaxLength = m.integer("maxLength", 0, 1)
 	parameter.Variables = m.pairs("variables")
+	parameter.List = m.flag("list", false)
+	parameter.Timezone = m.text("timezone", "")
+	parameter.Presets = m.pairs("presets")
+	parameter.Format = m.text("format", "")
 	isString := parameter.Type == TypeString
 	switch parameter.Type {
-	case TypeString, TypeInt, TypeFloat, TypeList:
+	case TypeString, TypeInt, TypeFloat, TypeList, TypeFile:
+	case TypeTime:
+		l.timeParameter(m, parameter)
 	case TypeBool:
 		// A flag is given or not; a required flag could never be false.
 		if parameter.Required {
 			l.problemf(m.at("required"), "must be false for a parameter of type bool, which is a flag")
 		}
 	default:
-		l.problemf(m.at("type"), "must be str, int, float, bool or list, not %q", string(parameter.Type))
+		l.problemf(m.at("type"), "must be str, int, float, bool, list, file or time, not %q", string(parameter.Type))
+	}
+	if parameter.List && parameter.Type != TypeFile {
+		l.problemf(m.at("list"), "only a parameter of type file takes a list; use type list for texts")
+	}
+	if parameter.Type != TypeTime {
+		for _, key := range []string{"timezone", "presets"} {
+			if m.has(key) {
+				l.problemf(m.at(key), "only a parameter of type time has it")
+			}
+		}
+	}
+	switch {
+	case parameter.Format != "" && !isString:
+		l.problemf(m.at("format"), "only a parameter of type str has a format")
+	case parameter.Format != "" && l.reserved.Formats != nil && !slices.Contains(l.reserved.Formats, parameter.Format):
+		l.problemf(m.at("format"), "unknown format %q, the tool checks: %s", parameter.Format, strings.Join(l.reserved.Formats, ", "))
 	}
 	if parameter.Template && !isString {
 		l.problemf(m.at("template"), "only a parameter of type str can take a template")
@@ -645,6 +688,22 @@ func (l *loader) parameter(path string, value any, step bool) *Parameter {
 	return parameter
 }
 
+// timeParameter checks what a parameter of type time has: a time zone that
+// exists, and presets that are times.
+func (l *loader) timeParameter(m mapping, parameter *Parameter) {
+	if parameter.Timezone != "" {
+		if _, err := time.LoadLocation(parameter.Timezone); err != nil {
+			l.problemf(m.at("timezone"), "unknown time zone %q", parameter.Timezone)
+		}
+	}
+	reference := time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
+	for _, preset := range parameter.Presets {
+		if _, err := ParseTime(preset.Value, reference); err != nil {
+			l.problemf(join(m.at("presets"), preset.Key), "%v", err)
+		}
+	}
+}
+
 // stepParameter decodes what only a step parameter has: a default, and a
 // type that has one.
 func (l *loader) stepParameter(m mapping, parameter *Parameter) {
@@ -676,8 +735,14 @@ func (l *loader) step(path string, value any) *Step {
 		Sub:      m.text("sub", ""),
 		Filters:  m.texts("filters"),
 		Select:   m.required("select"),
+		Each:     m.text("each", ""),
+		Add:      m.texts("add"),
+		Remove:   m.texts("remove"),
 		path:     path,
 		raw:      m.object,
+	}
+	if step.Each != "" && !m.has("call") {
+		l.problemf(m.at("each"), "only a call step runs for each item of a list")
 	}
 	if m.has("get") == m.has("call") {
 		l.problemf(path, "needs either 'get' or 'call'")
