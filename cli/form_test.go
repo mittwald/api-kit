@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,7 +65,12 @@ func TestCallTakesSeveralFiles(t *testing.T) {
 	if code != apikit.ExitOK {
 		t.Fatalf("exit code = %d, stderr = %q", code, stderr)
 	}
-	if got, want := lastBody(t, h), `{"text": "Rex", "photos": ["`+first+`", "`+second+`"]}`; got != want {
+	// A path is a JSON string, with the backslashes of Windows escaped.
+	quoted := func(path string) string {
+		data, _ := json.Marshal(path)
+		return string(data)
+	}
+	if got, want := lastBody(t, h), `{"text": "Rex", "photos": [`+quoted(first)+`, `+quoted(second)+`]}`; got != want {
 		t.Errorf("body = %s, want %s", got, want)
 	}
 
