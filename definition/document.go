@@ -393,6 +393,13 @@ type Setter struct {
 	// Token is the template of the token to send the request with, in
 	// place of the caller's own.
 	Token string
+	// Headers are further headers of the request, in document order. Their
+	// values are templates; a header whose value comes to nothing is not
+	// sent. Their values are kept out of errors, like a token.
+	Headers []Pair
+	// Encoding is how the payload is sent: [EncodingJSON], or
+	// [EncodingMultipart] for a form that may carry files.
+	Encoding string
 	// Parameters are the values the caller gives.
 	Parameters []*Parameter
 	// StepParameters are optional values with a default, for the steps.
@@ -410,6 +417,17 @@ type Setter struct {
 	path string
 }
 
+// The encodings of a payload.
+const (
+	// EncodingJSON sends the payload as JSON.
+	EncodingJSON = "json"
+	// EncodingMultipart sends the payload, a mapping, as a form of type
+	// multipart/form-data: a field whose template is a parameter of type
+	// file and nothing else is the content of that file, every other field
+	// the text of its value.
+	EncodingMultipart = "multipart"
+)
+
 // ParamType is the type of a parameter's value.
 type ParamType string
 
@@ -425,6 +443,13 @@ const (
 	TypeBool ParamType = "bool"
 	// TypeList is one or more texts.
 	TypeList ParamType = "list"
+	// TypeFile is the path of a file that must exist, or one path or more
+	// with List.
+	TypeFile ParamType = "file"
+	// TypeTime is a point in time: an ISO 8601 time, a time relative to
+	// now, or a preset. It is sent as an RFC 3339 time in the time zone of
+	// the parameter.
+	TypeTime ParamType = "time"
 )
 
 // Parameter is one value a caller gives to a call.
@@ -459,9 +484,27 @@ type Parameter struct {
 	MaxLength int
 	// Lookup resolves the value against a listing.
 	Lookup *Lookup
+	// List lets a parameter of type file take several values.
+	List bool
+	// Timezone is the time zone of a parameter of type time, an IANA name.
+	// Empty means the local one.
+	Timezone string
+	// Presets are names a parameter of type time takes in place of a time,
+	// each with the time it stands for, in document order.
+	Presets []Pair
+	// Format names a check of the tool for the value of a parameter of
+	// type str, such as one of its markup. The tool says what the value
+	// gets wrong; the call is sent all the same.
+	Format string
 
 	path string
 	raw  *apikit.Object
+}
+
+// TakesList reports whether the parameter takes several values: one of
+// type list, or of type file with List.
+func (p *Parameter) TakesList() bool {
+	return p.Type == TypeList || p.Type == TypeFile && p.List
 }
 
 // OptionNames returns the name and the aliases of the parameter: the
@@ -534,6 +577,17 @@ type Step struct {
 	Select string
 	// Parameters are the parameters of Call: templates by name.
 	Parameters *apikit.Object
+	// Each names a list the call of the step runs once for, with each item
+	// of it in turn under that name. The step keeps the list of what each
+	// run selected, and does not run when the list has no value.
+	Each string
+	// Add are templates of values the step adds to the list it selected,
+	// unless the list has them. A template that is a list and nothing else
+	// adds every item of it.
+	Add []string
+	// Remove are templates of values the step takes out of the list it
+	// selected, written like those of Add.
+	Remove []string
 	// When are the conditions under which the step runs: all of them must
 	// hold. A step without conditions always runs. A step that does not run
 	// keeps nothing, and a step that uses what it would have kept does not

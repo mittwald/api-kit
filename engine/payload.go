@@ -133,6 +133,9 @@ type payloadBuild struct {
 	// optional are the parameters that may be left out, and whose
 	// placeholders then take their part of the payload with them.
 	optional []string
+	// steps are the steps of the setter. One that did not run takes its
+	// part of the payload with it, like a parameter that was not given.
+	steps []string
 	// used holds every name the template asked for, with its value or
 	// with nothing: the message of the setter may name them too.
 	used values
@@ -195,7 +198,9 @@ func (b *payloadBuild) text(source string, typed bool) (value any, keep bool) {
 		b.used.set(name, value)
 		switch {
 		case given:
-		case slices.ContainsFunc(b.optional, func(optional string) bool { return variableKey(optional) == variableKey(name) }):
+		case slices.ContainsFunc(slices.Concat(b.optional, b.steps), func(optional string) bool {
+			return variableKey(optional) == variableKey(name)
+		}):
 			keep = false
 		case !slices.Contains(b.missing, name):
 			b.missing = append(b.missing, name)
@@ -227,6 +232,9 @@ func (r *callRun) payload(setter *definition.Setter, vals values) (body any, use
 		if !parameter.Required {
 			build.optional = append(build.optional, parameter.Name)
 		}
+	}
+	for _, step := range setter.Steps {
+		build.steps = append(build.steps, step.As)
 	}
 	body, keep := build.node(template)
 	switch {

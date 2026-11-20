@@ -130,6 +130,28 @@ func TestLoadMinimalDefinitionFillsDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadChecksFormatsAgainstThoseOfTheTool(t *testing.T) {
+	source := environments + `resources:
+  pets:
+    setters:
+      - {name: describe, parameters: [{name: text, format: markdown}]}
+`
+	known := reserved
+	known.Formats = []string{"markdown"}
+	if _, _, err := definition.Load(definition.Source{Name: "test", Data: []byte(source)}, definition.LoadOptions{Reserved: known}); err != nil {
+		t.Errorf("a format the tool checks: %v", err)
+	}
+	known.Formats = []string{"html", "text"}
+	_, _, err := definition.Load(definition.Source{Name: "test", Data: []byte(source)}, definition.LoadOptions{Reserved: known})
+	if err == nil || !strings.Contains(err.Error(), `parameters[0].format: unknown format "markdown", the tool checks: html, text`) {
+		t.Errorf("a format the tool does not check: %v", err)
+	}
+	// A loader that knows no tool takes any format.
+	if _, _, err := definition.Load(definition.Source{Name: "test", Data: []byte(source)}, definition.LoadOptions{Reserved: reserved}); err != nil {
+		t.Errorf("without formats of a tool: %v", err)
+	}
+}
+
 func TestUndefinedResourceGetsDefaults(t *testing.T) {
 	doc := mustLoad(t, environments+"resources:\n  toys: {}\n  staff: {}\n")
 
@@ -285,6 +307,18 @@ resources:
         payloadTemplate: '{"force": ${force}}'
         parameters:
           - {name: force, type: bool, required: false}
+      - name: upload
+        encoding: multipart
+        headers: {X-Upload: "${session}"}
+        payloadTemplate: {photo: "${photos}", copies: "${copies}"}
+        parameters:
+          - {name: photos, type: file, list: true}
+          - {name: at, type: time, required: false, timezone: Europe/Berlin, presets: {soon: "+1h"}}
+          - {name: note, required: false, format: markdown}
+        steps:
+          - {as: session, call: login, resource: owners, id: "1", select: token}
+          - {as: tags, get: owners, id: "1", select: tags, add: ["${note}"], remove: [old]}
+          - {as: copies, call: login, resource: owners, id: "1", each: photos, select: id}
   staff:
     parent: owners
 `
@@ -446,6 +480,27 @@ func TestLoadDecodesEveryKey(t *testing.T) {
 	}
 	if note := rename.Then[0]; note.ID != "${result}" || note.Call != "login" {
 		t.Errorf("then step = %+v", note)
+	}
+	upload := pets.Setters[2]
+	if upload.Encoding != definition.EncodingMultipart || rename.Encoding != definition.EncodingJSON ||
+		!slices.Equal(upload.Headers, []definition.Pair{{Key: "X-Upload", Value: "${session}"}}) {
+		t.Errorf("setter upload = %+v", upload)
+	}
+	if photos := upload.Parameters[0]; photos.Type != definition.TypeFile || !photos.List || !photos.TakesList() {
+		t.Errorf("parameter photos = %+v", photos)
+	}
+	if at := upload.Parameters[1]; at.Type != definition.TypeTime || at.Timezone != "Europe/Berlin" ||
+		!slices.Equal(at.Presets, []definition.Pair{{Key: "soon", Value: "+1h"}}) || at.TakesList() {
+		t.Errorf("parameter at = %+v", at)
+	}
+	if note := upload.Parameters[2]; note.Format != "markdown" {
+		t.Errorf("parameter note = %+v", note)
+	}
+	if tags := upload.Steps[1]; !slices.Equal(tags.Add, []string{"${note}"}) || !slices.Equal(tags.Remove, []string{"old"}) {
+		t.Errorf("step tags = %+v", tags)
+	}
+	if copies := upload.Steps[2]; copies.Each != "photos" {
+		t.Errorf("step copies = %+v", copies)
 	}
 	if doc.Raw() == nil || !doc.Raw().Has("resources") {
 		t.Error("Raw() does not return the document")

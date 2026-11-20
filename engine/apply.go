@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"net/url"
+	"slices"
 	"strings"
 
 	apikit "github.com/mittwald/api-kit"
@@ -81,6 +82,10 @@ type CallResult struct {
 	// the parameters of the call, in the order of the definition. It is
 	// empty, but not nil, for a call that takes neither.
 	DryRun []ResolvedParam
+	// Warnings are what the checks of the formats of parameters found
+	// wrong with their values, for a dry run as well. The call was sent all
+	// the same.
+	Warnings []string
 }
 
 // callRun is one call under way.
@@ -102,6 +107,8 @@ type callRun struct {
 	// secrets are the tokens that steps supplied, and what they were made
 	// from. They must not show in an error.
 	secrets []string
+	// warnings are what the checks of formats found in the calls of steps.
+	warnings []string
 }
 
 // newCallRun returns the state of a call that has the given arguments.
@@ -182,6 +189,9 @@ func (r *callRun) apply(ctx context.Context, in CallInput) (*CallResult, error) 
 	}
 
 	asGiven := maps.Clone(r.args)
+	if err := r.e.convertParameters(call, r.args, ""); err != nil {
+		return nil, err
+	}
 	if in.ID != "" {
 		if r.id, err = r.e.ResolveID(ctx, r.resource, in.ID); err != nil {
 			return nil, err
@@ -206,11 +216,20 @@ func (r *callRun) apply(ctx context.Context, in CallInput) (*CallResult, error) 
 			}
 		}
 	}
-	result := &CallResult{Resource: r.resource}
+	result := &CallResult{Resource: r.resource, Warnings: r.e.formatWarnings(selected, r.args)}
 	if in.DryRun {
 		result.DryRun = r.resolved(selected, in.ID, asGiven)
 		return result, nil
 	}
+	// The calls of steps check their values too; a value a step passes on
+	// as it was given is not reported twice.
+	defer func() {
+		for _, warning := range r.warnings {
+			if !slices.Contains(result.Warnings, warning) {
+				result.Warnings = append(result.Warnings, warning)
+			}
+		}
+	}()
 	for i, setter := range selected {
 		did, err := r.runSetter(ctx, setter)
 		if err != nil {
@@ -302,6 +321,7 @@ func (r *callRun) runSetter(ctx context.Context, setter *definition.Setter) (sen
 	if err := r.checkPayload(setter, vals); err != nil {
 		return sent{}, err
 	}
+	r.headerSecrets(setter, vals)
 	if err := r.runSteps(ctx, setter, vals); err != nil {
 		return sent{}, err
 	}
@@ -318,10 +338,17 @@ func (r *callRun) runSetter(ctx context.Context, setter *definition.Setter) (sen
 		return sent{}, err
 	}
 
-	answer, err := r.e.request(ctx, call{
-		method: setter.Method, url: target, body: body, token: token,
+	request := call{
+		method: setter.Method, url: target, body: body, token: token, header: r.headers(setter, vals),
 		verb: "apply", resource: r.resource, id: r.id,
-	})
+	}
+	request.fresh = len(request.header) > 0
+	if setter.Encoding == definition.EncodingMultipart && body != nil {
+		if request.form, request.formType, err = r.multipartForm(setter, body); err != nil {
+			return sent{}, err
+		}
+	}
+	answer, err := r.e.request(ctx, request)
 	if err != nil {
 		// What a call changes was found before; a 404 now is a refusal.
 		if apikit.KindOf(err) == apikit.KindNotFound {

@@ -25,6 +25,14 @@ type call struct {
 	header http.Header
 	// body is sent as JSON. Nil sends no body.
 	body any
+	// form is sent in place of body, as it is, with the content type
+	// formType.
+	form     []byte
+	formType string
+	// fresh keeps a GET from being answered from memory or by a request
+	// for the same URL, as for one with headers of a setter, which may see
+	// what another does not.
+	fresh bool
 	// token is sent in place of the credential of the Engine. A request
 	// with a token of its own is never answered from memory, and when the
 	// API rejects the token, the request fails.
@@ -76,12 +84,13 @@ type flight struct {
 func (e *Engine) request(ctx context.Context, c call) (any, error) {
 	var got answer
 	var err error
-	if c.method == http.MethodGet && c.token == "" {
+	if c.method == http.MethodGet && c.token == "" && !c.fresh {
 		got, err = e.remembered(ctx, c)
 	} else {
 		// Requests that change something must reach the API every time,
 		// and what they answer says nothing about a later GET. A token of
-		// the request's own may see what the Engine's credential does not.
+		// the request's own may see what the Engine's credential does not,
+		// and so may a request that is fresh.
 		got, err = e.exchange(ctx, c)
 	}
 	if err != nil {
@@ -152,8 +161,8 @@ func keeps(status int) bool {
 // one and the request is sent once more. What the token source fails with
 // is returned as it is: it knows best why there is no token.
 func (e *Engine) exchange(ctx context.Context, c call) (answer, error) {
-	var payload []byte
-	if c.body != nil {
+	payload := c.form
+	if c.form == nil && c.body != nil {
 		var err error
 		if payload, err = apikit.Marshal(c.body); err != nil {
 			return answer{}, e.failed(c, fmt.Errorf("the request body cannot be encoded: %w", err))
@@ -254,10 +263,20 @@ func (e *Engine) newRequest(ctx context.Context, c call, payload []byte, token s
 	if err != nil {
 		return nil, err
 	}
+	// The headers of a request carry what a credential would, such as the
+	// token of a step: none of them follows a redirect to another host.
+	var names []string
 	for name, values := range c.header {
 		req.Header[name] = slices.Clone(values)
+		names = append(names, name)
 	}
-	if payload != nil {
+	req = withSecretHeaders(req, names)
+	// A form needs the boundary of its parts; JSON takes a type of the
+	// setter's own, such as that of a vendor.
+	switch {
+	case c.form != nil:
+		req.Header.Set("Content-Type", c.formType)
+	case payload != nil && req.Header.Get("Content-Type") == "":
 		req.Header.Set("Content-Type", "application/json")
 	}
 	if token != "" {

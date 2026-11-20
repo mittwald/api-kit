@@ -83,5 +83,15 @@ func (e *Engine) withCredential(req *http.Request, token string) *http.Request {
 			names = append(names, name)
 		}
 	}
-	return req.WithContext(context.WithValue(req.Context(), credentialKey{}, names))
+	return withSecretHeaders(req, names)
+}
+
+// withSecretHeaders returns req with names added to the headers that
+// [checkRedirect] keeps from another host.
+func withSecretHeaders(req *http.Request, names []string) *http.Request {
+	if len(names) == 0 {
+		return req
+	}
+	known, _ := req.Context().Value(credentialKey{}).([]string)
+	return req.WithContext(context.WithValue(req.Context(), credentialKey{}, slices.Concat(known, names)))
 }

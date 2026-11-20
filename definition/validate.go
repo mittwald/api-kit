@@ -132,6 +132,7 @@ func (l *loader) setters(doc *Document, resource *Resource, path string) {
 				l.problemf(join(setter.path, "token"), "template variable %q is not a step; a token comes from a step", variable)
 			}
 		}
+		l.setterHeaders(setter, known)
 		l.setterTemplates(setter, known)
 		l.optionalSteps(setter, optional)
 		l.parameterGroups(setter, c)
@@ -299,6 +300,12 @@ func (l *loader) steps(doc *Document, steps []*Step, known map[string]bool, then
 				l.problemf(join(step.path, "call"), "resource %q has no call %q", step.Resource, step.Call)
 			}
 		}
+		if step.Each != "" {
+			l.stepEach(step, known, names, then)
+		}
+		if then && (len(step.Add) > 0 || len(step.Remove) > 0) {
+			l.problemf(step.path, "only a step before the request adds to or removes from a list")
+		}
 		// A step sees the parameters, the ID and the steps before it. Its
 		// conditions are no templates: their values are compared as written.
 		templates := apikit.NewObject()
@@ -319,7 +326,7 @@ func (l *loader) steps(doc *Document, steps []*Step, known map[string]bool, then
 					condition.Source, condition.Name)
 			}
 		}
-		if len(step.When) > 0 || slices.ContainsFunc(namesOf(templates), func(name string) bool {
+		if len(step.When) > 0 || step.Each != "" || slices.ContainsFunc(namesOf(templates), func(name string) bool {
 			return slices.Contains(optional, sameSpelling(name))
 		}) {
 			optional = append(optional, sameSpelling(step.As))
@@ -331,6 +338,8 @@ func (l *loader) steps(doc *Document, steps []*Step, known map[string]bool, then
 
 // optionalSteps checks that the request of a setter does not depend on a
 // step that may not run: its placeholder would be sent as it is written.
+// The payload may: the part of it that such a step stands for goes when
+// the step did not run, as that of a parameter that was not given.
 func (l *loader) optionalSteps(setter *Setter, optional []string) {
 	if len(optional) == 0 {
 		return
@@ -340,9 +349,14 @@ func (l *loader) optionalSteps(setter *Setter, optional []string) {
 		template any
 	}{
 		{"pathTemplate", setter.PathTemplate},
-		{"payloadTemplate", setter.PayloadTemplate},
 		{"token", setter.Token},
 		{"message", setter.Message},
+	}
+	for _, header := range setter.Headers {
+		templates = append(templates, struct {
+			key      string
+			template any
+		}{join("headers", header.Key), header.Value})
 	}
 	for _, t := range templates {
 		for _, variable := range namesOf(t.template) {
@@ -350,6 +364,35 @@ func (l *loader) optionalSteps(setter *Setter, optional []string) {
 				l.problemf(join(setter.path, t.key), "template variable %q is a step that may not run", variable)
 			}
 		}
+	}
+}
+
+// setterHeaders checks the headers of a setter: their names, and the
+// variables of their values.
+func (l *loader) setterHeaders(setter *Setter, known map[string]bool) {
+	for _, header := range setter.Headers {
+		path := join(join(setter.path, "headers"), header.Key)
+		if !headerName.MatchString(header.Key) {
+			l.problemf(path, "%q is no name of a header", header.Key)
+		}
+		for _, variable := range variablesOf(header.Value) {
+			if !known[variable] {
+				l.problemf(path, "template variable %q is not a parameter or a step", variable)
+			}
+		}
+	}
+}
+
+// stepEach checks the list a step runs for: a parameter of the setter or
+// an earlier step. Only the steps before the request run for each item of
+// a list.
+func (l *loader) stepEach(step *Step, known map[string]bool, earlier []string, then bool) {
+	path := join(step.path, "each")
+	if then {
+		l.problemf(path, "only a step before the request runs for each item of a list")
+	}
+	if !known[step.Each] && !slices.Contains(earlier, step.Each) {
+		l.problemf(path, "%q is not a parameter or an earlier step", step.Each)
 	}
 }
 

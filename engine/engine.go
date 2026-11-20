@@ -78,6 +78,14 @@ type Options struct {
 	// Templates holds the call templates a tool ships, as YAML files at
 	// its root. Nil means it ships none.
 	Templates fs.FS
+	// Now returns the current time, which times relative to now start
+	// from. Nil means the clock.
+	Now func() time.Time
+	// Formats are the checks of the tool that a parameter names with its
+	// format, by name. A check returns what is wrong with a value, one
+	// line for each mistake; the call is sent all the same. A format
+	// without a check is not checked.
+	Formats map[string]func(value string) []string
 }
 
 // Stage says what an [Engine] is busy with when it reports [Progress].
@@ -122,6 +130,8 @@ type Engine struct {
 	sleep       func(ctx context.Context, d time.Duration) error
 	stdin       io.Reader
 	templates   fs.FS
+	now         func() time.Time
+	formats     map[string]func(value string) []string
 
 	// mu guards the answers that are kept and the requests under way.
 	mu       sync.Mutex
@@ -164,6 +174,8 @@ func New(o Options) (*Engine, error) {
 		sleep:       o.Sleep,
 		stdin:       o.Stdin,
 		templates:   o.Templates,
+		now:         o.Now,
+		formats:     o.Formats,
 		answers:     map[string]answer{},
 		inflight:    map[string]*flight{},
 	}
@@ -183,6 +195,9 @@ func New(o Options) (*Engine, error) {
 	}
 	if e.sleep == nil {
 		e.sleep = sleep
+	}
+	if e.now == nil {
+		e.now = time.Now
 	}
 	return e, nil
 }

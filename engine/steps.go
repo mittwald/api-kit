@@ -44,8 +44,9 @@ func (r *callRun) stepsKey(setter *definition.Setter, vals values) string {
 	var key strings.Builder
 	fmt.Fprintf(&key, "%q", r.id)
 	for _, step := range setter.Steps {
-		fmt.Fprintf(&key, " %q %q %q %q %q %q %q %t %q %s", step.As, step.Get, step.Call, step.Resource,
-			step.ID, step.Sub, step.Filters, step.First, step.Select, apikit.Text(step.Parameters))
+		fmt.Fprintf(&key, " %q %q %q %q %q %q %q %t %q %s %q %q %q", step.As, step.Get, step.Call, step.Resource,
+			step.ID, step.Sub, step.Filters, step.First, step.Select, apikit.Text(step.Parameters),
+			step.Each, step.Add, step.Remove)
 		// What the conditions test decides which steps run.
 		for _, condition := range step.When {
 			value, _ := vals.get(condition.Name)
@@ -72,10 +73,17 @@ func (r *callRun) runSteps(ctx context.Context, setter *definition.Setter, vals 
 		maps.Copy(vals, kept)
 		return nil
 	}
-	// What ends up as the token must not show in an error.
+	// What ends up as the token or in a header must not show in an error,
+	// also one of a later step.
 	var secret []string
-	for _, placeholder := range expr.ParseTemplate(setter.Token).Placeholders() {
-		secret = append(secret, variableKey(placeholder.Name))
+	templates := []string{setter.Token}
+	for _, header := range setter.Headers {
+		templates = append(templates, header.Value)
+	}
+	for _, template := range templates {
+		for _, placeholder := range expr.ParseTemplate(template).Placeholders() {
+			secret = append(secret, variableKey(placeholder.Name))
+		}
 	}
 	kept := values{}
 	var skipped []string
@@ -84,20 +92,9 @@ func (r *callRun) runSteps(ctx context.Context, setter *definition.Setter, vals 
 			skipped = append(skipped, step.As)
 			continue
 		}
-		var item any
-		var err error
-		if step.Get != "" {
-			item, err = r.getStep(ctx, step, vals)
-		} else {
-			item, err = r.callStep(ctx, step, vals)
-		}
+		value, err := r.stepValue(ctx, step, vals)
 		if err != nil {
 			return err
-		}
-		object, _ := item.(*apikit.Object)
-		value := fieldOf(object, step.Select)
-		if value == nil || value == "" {
-			return stepFailed(step, "found no %s", step.Select)
 		}
 		if slices.Contains(secret, variableKey(step.As)) {
 			r.secrets = append(r.secrets, apikit.Text(value))
@@ -107,6 +104,104 @@ func (r *callRun) runSteps(ctx context.Context, setter *definition.Setter, vals 
 	}
 	r.kept[key] = kept
 	return nil
+}
+
+// stepValue runs a step and returns what it keeps: the field it selects,
+// for each item of the list it runs for, with the values it adds and
+// without those it removes.
+func (r *callRun) stepValue(ctx context.Context, step *definition.Step, vals values) (any, error) {
+	if step.Each != "" {
+		list, _ := vals.get(step.Each)
+		kept := []any{}
+		for _, each := range listOf(list) {
+			own := maps.Clone(vals)
+			own.set(step.Each, each)
+			value, err := r.selectOf(ctx, step, own)
+			if err != nil {
+				return nil, err
+			}
+			kept = append(kept, value)
+		}
+		return r.changeList(step, kept, vals), nil
+	}
+	if len(step.Add) == 0 && len(step.Remove) == 0 {
+		return r.selectOf(ctx, step, vals)
+	}
+	item, err := r.stepItem(ctx, step, vals)
+	if err != nil {
+		return nil, err
+	}
+	// A list the item does not have is one without values.
+	return r.changeList(step, listOf(fieldOf(item, step.Select)), vals), nil
+}
+
+// selectOf runs a step once and returns the field it selects, which must
+// have a value.
+func (r *callRun) selectOf(ctx context.Context, step *definition.Step, vals values) (any, error) {
+	item, err := r.stepItem(ctx, step, vals)
+	if err != nil {
+		return nil, err
+	}
+	value := fieldOf(item, step.Select)
+	if value == nil || value == "" {
+		return nil, stepFailed(step, "found no %s", step.Select)
+	}
+	return value, nil
+}
+
+// stepItem runs a step once and returns the item it fetched or the answer
+// of its call.
+func (r *callRun) stepItem(ctx context.Context, step *definition.Step, vals values) (*apikit.Object, error) {
+	if step.Get != "" {
+		return r.getStep(ctx, step, vals)
+	}
+	answer, err := r.callStep(ctx, step, vals)
+	if err != nil {
+		return nil, err
+	}
+	item, _ := answer.(*apikit.Object)
+	return item, nil
+}
+
+// changeList returns a list with the values a step adds, unless it has
+// them, and without the values the step removes. Values are compared as
+// [apikit.Text] shows them.
+func (r *callRun) changeList(step *definition.Step, list []any, vals values) []any {
+	changed := slices.Clone(list)
+	has := func(value any) bool {
+		return slices.ContainsFunc(changed, func(item any) bool { return apikit.Text(item) == apikit.Text(value) })
+	}
+	for _, template := range step.Add {
+		for _, value := range templateValues(template, vals) {
+			if !has(value) {
+				changed = append(changed, value)
+			}
+		}
+	}
+	for _, template := range step.Remove {
+		for _, value := range templateValues(template, vals) {
+			changed = slices.DeleteFunc(changed, func(item any) bool { return apikit.Text(item) == apikit.Text(value) })
+		}
+	}
+	if changed == nil {
+		changed = []any{}
+	}
+	return changed
+}
+
+// templateValues returns the values a template of Add or Remove stands
+// for: the items of a list that a placeholder alone names, nothing for a
+// placeholder without a value, else the text the template renders to.
+func templateValues(template string, vals values) []any {
+	if name, sole := expr.ParseTemplate(template).Sole(); sole {
+		value, _ := vals.get(name)
+		return listOf(value)
+	}
+	text := renderWith(template, vals.get)
+	if text == "" {
+		return nil
+	}
+	return []any{text}
 }
 
 // getStep fetches what a step names and returns the one item it picks. A
@@ -154,13 +249,21 @@ func (r *callRun) callStep(ctx context.Context, step *definition.Step, vals valu
 	if err != nil {
 		return nil, err
 	}
+	if err := r.e.convertParameters(call, args, ""); err != nil {
+		return nil, stepError(step, err)
+	}
 	if err := checkArguments(call, call.Setters, args); err != nil {
 		return nil, stepError(step, err)
 	}
 
 	called := r.e.newCallRun(step.Resource, call, args)
-	// The secrets of the call are those of the step, whatever comes of it.
-	defer func() { r.secrets = append(r.secrets, called.secrets...) }()
+	// The secrets of the call are those of the step, whatever comes of it,
+	// and so are the warnings about its values.
+	called.warnings = r.e.formatWarnings(call.Setters, args)
+	defer func() {
+		r.secrets = append(r.secrets, called.secrets...)
+		r.warnings = append(r.warnings, called.warnings...)
+	}()
 	if id != "" {
 		if called.id, err = r.e.ResolveID(ctx, step.Resource, id); err != nil {
 			return nil, stepError(step, err)
@@ -240,9 +343,9 @@ func stepArgument(step *definition.Step, parameter *definition.Parameter, value 
 	text := apikit.Text(value)
 	_, isObject := value.(*apikit.Object)
 	switch {
-	case parameter.Type == definition.TypeList && isList:
+	case parameter.TakesList() && isList:
 		return list, nil
-	case parameter.Type == definition.TypeList:
+	case parameter.TakesList():
 		return []any{value}, nil
 	case isList:
 		return nil, stepFailed(step, "gives parameter %s a list", parameter.Name)
@@ -330,9 +433,13 @@ func (r *callRun) thenStep(ctx context.Context, step *definition.Step, vals valu
 	return nil
 }
 
-// stepRuns reports whether a step runs: when all its conditions hold, and
-// it uses nothing that a step which did not run would have kept.
+// stepRuns reports whether a step runs: when all its conditions hold, the
+// list it runs for has a value, and it uses nothing that a step which did
+// not run would have kept.
 func stepRuns(step *definition.Step, vals values, skipped []string) bool {
+	if step.Each != "" && !vals.has(step.Each) {
+		return false
+	}
 	for _, name := range skipped {
 		if stepUses(step, name) {
 			return false
@@ -369,7 +476,9 @@ func stepUses(step *definition.Step, name string) bool {
 		}
 		return false
 	}
-	return uses(step.ID) || uses(step.Parameters) || slices.ContainsFunc(step.Filters, func(filter string) bool {
-		return uses(filter)
-	})
+	texts := func(templates []string) bool {
+		return slices.ContainsFunc(templates, func(template string) bool { return uses(template) })
+	}
+	return uses(step.ID) || uses(step.Parameters) || texts(step.Filters) || texts(step.Add) || texts(step.Remove) ||
+		(step.Each != "" && variableKey(step.Each) == variableKey(name))
 }

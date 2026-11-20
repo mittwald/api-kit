@@ -2,6 +2,7 @@ package cli
 
 import (
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -95,7 +96,7 @@ func (g *globals) spec() (output.Spec, error) {
 
 // reserved returns the names a definition cannot take for its calls and
 // parameters, because the command line uses them itself.
-func reserved(root *cobra.Command) definition.Reserved {
+func reserved(root *cobra.Command, formats map[string]func(string) []string) definition.Reserved {
 	names := definition.Reserved{
 		// Commands that are added after the definition is loaded.
 		Commands:               []string{"get", "config", "apply", "auth", "completion", "help"},
@@ -107,6 +108,11 @@ func reserved(root *cobra.Command) definition.Reserved {
 	for _, command := range root.Commands() {
 		names.Commands = append(names.Commands, command.Name())
 	}
+	names.Formats = []string{}
+	for name := range formats {
+		names.Formats = append(names.Formats, name)
+	}
+	slices.Sort(names.Formats)
 	root.PersistentFlags().VisitAll(func(flag *pflag.Flag) {
 		names.GlobalOptions = append(names.GlobalOptions, flag.Name)
 	})

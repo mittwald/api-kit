@@ -129,10 +129,10 @@ func parameterValue(parameter *definition.Parameter, value any) (any, error) {
 
 	mistyped := fmt.Errorf("must be of type %s", parameter.Type)
 	items, isList := value.([]any)
-	if parameter.Type == definition.TypeList {
+	if parameter.TakesList() {
 		mistyped = errors.New("must be a value or a list of values")
 	}
-	if parameter.Type != definition.TypeList || !isList {
+	if !parameter.TakesList() || !isList {
 		items = []any{value}
 	}
 	if len(items) == 0 {
@@ -149,9 +149,10 @@ func parameterValue(parameter *definition.Parameter, value any) (any, error) {
 	}
 
 	text := apikit.Text(texts[0])
-	switch parameter.Type {
-	case definition.TypeList:
+	if parameter.TakesList() {
 		return texts, nil
+	}
+	switch parameter.Type {
 	case definition.TypeInt, definition.TypeFloat:
 		number, ok := parameterNumber(parameter.Type, text)
 		if !ok {
@@ -315,22 +316,38 @@ func (r *callRun) prepare(ctx context.Context, setters []*definition.Setter) err
 
 // resolveIDs replaces the value of every parameter that names an item of a
 // resource by the ID of that item, so that a parameter takes whatever the
-// ID of a call takes: an alias or a name.
+// ID of a call takes: an alias or a name. Each value of a list names an
+// item.
 func (r *callRun) resolveIDs(ctx context.Context, setters []*definition.Setter) error {
 	asGiven := maps.Clone(r.args)
 	for _, setter := range setters {
 		for _, parameter := range setter.Parameters {
 			value, _ := asGiven.get(parameter.Name)
-			text, _ := value.(string)
 			resource := parameterResource(parameter, asGiven)
-			if resource == "" || text == "" {
+			if resource == "" {
 				continue
 			}
-			id, err := r.e.ResolveID(ctx, resource, text)
-			if err != nil {
-				return err
+			switch value := value.(type) {
+			case string:
+				if value == "" {
+					continue
+				}
+				id, err := r.e.ResolveID(ctx, resource, value)
+				if err != nil {
+					return err
+				}
+				r.args.set(parameter.Name, id)
+			case []any:
+				ids := make([]any, len(value))
+				for i, item := range value {
+					id, err := r.e.ResolveID(ctx, resource, apikit.Text(item))
+					if err != nil {
+						return err
+					}
+					ids[i] = id
+				}
+				r.args.set(parameter.Name, ids)
 			}
-			r.args.set(parameter.Name, id)
 		}
 	}
 	return nil

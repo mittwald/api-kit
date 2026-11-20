@@ -111,7 +111,7 @@ func TestSetterProblems(t *testing.T) {
 		{"parameter without a name", `- {name: feed, parameters: [{help: Nameless}]}`,
 			[]string{at + "[0].parameters[0].name: is required"}},
 		{"unknown parameter type", `- {name: feed, parameters: [{name: food, type: date}]}`,
-			[]string{at + `[0].parameters[0].type: must be str, int, float, bool or list, not "date"`}},
+			[]string{at + `[0].parameters[0].type: must be str, int, float, bool, list, file or time, not "date"`}},
 		{"required flag", `- {name: feed, parameters: [{name: quiet, type: bool}]}`,
 			[]string{at + "[0].parameters[0].required: must be false for a parameter of type bool"}},
 		{"template on a number", `- {name: feed, parameters: [{name: grams, type: int, template: true}]}`,
@@ -251,6 +251,7 @@ func TestSetterProblems(t *testing.T) {
   pathTemplate: pets/${id}/${keeper}
   payloadTemplate: {by: "${session}"}
   token: "${session}"
+  headers: {X-Session: "${session}"}
   message: Fed by $session_key
   parameters: [{name: quiet, type: bool, required: false}]
   steps:
@@ -259,10 +260,50 @@ func TestSetterProblems(t *testing.T) {
     - {as: session-key, get: owners, select: id, when: ["keeper=${HOME}"]}`,
 			[]string{
 				at + `[0].pathTemplate: template variable "keeper" is a step that may not run`,
-				at + `[0].payloadTemplate: template variable "session" is a step that may not run`,
 				at + `[0].token: template variable "session" is a step that may not run`,
+				at + `[0].headers.X-Session: template variable "session" is a step that may not run`,
 				at + `[0].message: template variable "session_key" is a step that may not run`,
 			}},
+
+		{"unknown encoding", `- {name: feed, encoding: xml}`,
+			[]string{at + `[0].encoding: must be json or multipart, not "xml"`}},
+		{"form that is no mapping", `- {name: feed, encoding: multipart, payloadTemplate: '{"a": 1}'}`,
+			[]string{at + `[0].payloadTemplate: must be a mapping for encoding multipart`}},
+		{"form with a field named by a template", `- {name: feed, encoding: multipart, payloadTemplate: {"${food}": x}, parameters: [{name: food}]}`,
+			[]string{at + `[0].payloadTemplate.${food}: the name of a field of a form cannot be a template`}},
+		{"header with an unknown variable", `- {name: feed, headers: {X-Bowl: "${bowl}"}}`,
+			[]string{at + `[0].headers.X-Bowl: template variable "bowl" is not a parameter or a step`}},
+		{"header with a bad name", `- {name: feed, headers: {"X Bowl": "full"}}`,
+			[]string{at + `[0].headers.X Bowl: "X Bowl" is no name of a header`}},
+		{"list of a parameter that is no file", `- {name: feed, parameters: [{name: food, list: true}]}`,
+			[]string{at + `[0].parameters[0].list: only a parameter of type file takes a list; use type list for texts`}},
+		{"time zone of a parameter that is no time", `- {name: feed, parameters: [{name: food, timezone: UTC}]}`,
+			[]string{at + `[0].parameters[0].timezone: only a parameter of type time has it`}},
+		{"unknown time zone", `- {name: feed, parameters: [{name: at, type: time, timezone: Mars/Base}]}`,
+			[]string{at + `[0].parameters[0].timezone: unknown time zone "Mars/Base"`}},
+		{"preset that is no time", `- {name: feed, parameters: [{name: at, type: time, presets: {soon: later}}]}`,
+			[]string{at + `[0].parameters[0].presets.soon: "later" is no time`}},
+		{"format of a parameter that is no text", `- {name: feed, parameters: [{name: count, type: int, format: markdown}]}`,
+			[]string{at + `[0].parameters[0].format: only a parameter of type str has a format`}},
+		{"each of a step that reads", `
+- name: feed
+  parameters: [{name: bowls, type: list}]
+  steps: [{as: owner, get: owners, each: bowls, select: id}]`,
+			[]string{at + `[0].steps[0].each: only a call step runs for each item of a list`}},
+		{"each of something unknown", `
+- name: feed
+  steps: [{as: session, call: login, resource: owners, id: "1", each: bowls, select: token}]`,
+			[]string{at + `[0].steps[0].each: "bowls" is not a parameter or an earlier step`}},
+		{"each after the request", `
+- name: feed
+  parameters: [{name: bowls, type: list}]
+  then: [{as: session, call: login, resource: owners, id: "1", each: bowls, select: token}]`,
+			[]string{at + `[0].then[0].each: only a step before the request runs for each item of a list`}},
+
+		{"list changed after the request", `
+- name: feed
+  then: [{as: session, call: login, resource: owners, id: "1", select: tokens, add: [x]}]`,
+			[]string{at + `[0].then[0]: only a step before the request adds to or removes from a list`}},
 
 		{"token from something that is no step", `- {name: feed, parameters: [{name: secret}], token: "${secret}"}`,
 			[]string{at + `[0].token: template variable "secret" is not a step`}},

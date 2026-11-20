@@ -91,6 +91,11 @@ type Options struct {
 	// once per run about the spelling to use instead, unless they are
 	// Silent.
 	FlagAliases []FlagAlias
+	// Formats are checks of values of parameters that name a format, by the
+	// name of the format. A check returns what is wrong with a value, one
+	// line for each mistake, which is printed as a warning; the call is
+	// sent all the same. A parameter may name only a format that is here.
+	Formats map[string]func(value string) []string
 	// CompletionInstall gives the bash, zsh and fish commands of
 	// "completion" an --install flag, which writes the script to the
 	// directory of the current user that the shell loads completion scripts

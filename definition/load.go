@@ -22,6 +22,9 @@ type Reserved struct {
 	// TemplateOptionSuffixes are appended to the name of a parameter that
 	// takes a template, for the options that give the template.
 	TemplateOptionSuffixes []string
+	// Formats are the formats the tool checks values of. A parameter that
+	// names another format is a mistake. Nil allows any.
+	Formats []string
 }
 
 // LoadOptions tell [Load] what to merge into the base definition and which

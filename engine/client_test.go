@@ -216,3 +216,51 @@ func TestOwnClientWaitsAsLongAsTheDefinitionSays(t *testing.T) {
 		}
 	})
 }
+
+func TestOwnClientKeepsTheHeadersOfASetterFromOtherHosts(t *testing.T) {
+	var elsewhere, home headers
+	other := httptest.NewServer(http.HandlerFunc(elsewhere.answer))
+	t.Cleanup(other.Close)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/away", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+"/v1/pets", http.StatusTemporaryRedirect)
+	})
+	mux.HandleFunc("/v1/near", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/v1/pets", http.StatusTemporaryRedirect)
+	})
+	mux.HandleFunc("/v1/pets", home.answer)
+	api := httptest.NewServer(mux)
+	t.Cleanup(api.Close)
+
+	source := "environments:\n  production:\n    apis:\n      main: " + api.URL + "/v1\n" + `
+resources:
+  pets:
+    setters:
+      - name: send
+        requiresId: false
+        method: GET
+        pathTemplate: "${to}"
+        headers: {X-Ticket: "${ticket}"}
+        parameters: [{name: to}, {name: ticket}]
+`
+	doc, _, err := definition.Load(definition.Source{Name: "local.yaml", Data: []byte(source)}, definition.LoadOptions{})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// No token of the engine: the header is the only credential.
+	shop, err := engine.New(engine.Options{Definition: doc})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	for _, to := range []string{"away", "near"} {
+		if _, err := shop.Apply(t.Context(), engine.CallInput{Resource: "pets", Call: "send", Params: map[string]any{"to": to, "ticket": "t1ck3t"}}); err != nil {
+			t.Fatalf("Apply to %s: %v", to, err)
+		}
+	}
+	if got := elsewhere.values("X-Ticket"); !slices.Equal(got, []string{""}) {
+		t.Errorf("the other host received X-Ticket %q, want one request without it", got)
+	}
+	if got := home.values("X-Ticket"); !slices.Equal(got, []string{"t1ck3t"}) {
+		t.Errorf("the host itself received X-Ticket %q after a redirect, want the ticket", got)
+	}
+}
