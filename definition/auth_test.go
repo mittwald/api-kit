@@ -71,7 +71,7 @@ login:
 	}
 	validate := auth.Validate
 	if validate.Request.API != "main" || validate.Request.Method != "POST" || validate.Request.Body != nil ||
-		!slices.Equal(validate.Valid, []int{200, 204}) || !slices.Equal(validate.Invalid, []int{401}) {
+		!slices.Equal(validate.Valid, []int{200, 204}) || !slices.Equal(validate.Invalid, []int{401}) || validate.ValidField != nil {
 		t.Errorf("Validate = %+v", validate)
 	}
 	refresh := auth.Refresh
@@ -125,6 +125,7 @@ auth:
     body: {}
     valid: [200]
     invalid: [401, 410]
+    validField: result.valid
   refresh:
     api: accounts
     method: put
@@ -171,7 +172,8 @@ func TestAuthDecodesEveryKey(t *testing.T) {
 	if validate.Request.API != "accounts" || validate.Request.Method != "POST" || validate.Request.Path != "tokens/check" ||
 		!slices.Equal(validate.Request.Query, []definition.QueryParameter{{Name: "scope", Template: "${token}"}}) ||
 		validate.Request.Body == nil || validate.Request.Body.Len() != 0 ||
-		!slices.Equal(validate.Valid, []int{200}) || !slices.Equal(validate.Invalid, []int{401, 410}) {
+		!slices.Equal(validate.Valid, []int{200}) || !slices.Equal(validate.Invalid, []int{401, 410}) ||
+		validate.ValidField == nil || validate.ValidField.String() != "result.valid" {
 		t.Errorf("Validate = %+v", validate)
 	}
 
@@ -289,6 +291,8 @@ func TestAuthProblems(t *testing.T) {
 			[]string{`auth.validate: template variable "session" has no value`}},
 		{"status that is valid and invalid", "validate: {path: tokens/check, valid: [200, 401], invalid: [403, 401]}",
 			[]string{"auth.validate.invalid[1]: 401 is a valid status as well"}},
+		{"valid field that is no path", "validate: {path: tokens/check, validField: \"a[\"}",
+			[]string{"auth.validate.validField: "}},
 		{"statuses that are no numbers", "validate: {path: tokens/check, valid: [ok]}",
 			[]string{"auth.validate.valid[0]: must be a whole number"}},
 		{"body that is no mapping", "validate: {path: tokens/check, body: token}",
