@@ -288,17 +288,26 @@ func checkArguments(call *definition.Call, selected []*definition.Setter, args v
 			if !ok {
 				continue
 			}
-			text := apikit.Text(value)
-			if choices := parameterChoices(parameter, args); len(choices) > 0 && !slices.Contains(choices, text) {
-				return apikit.Errorf(apikit.KindUsage, "--%s %s is not possible here, choose from %s",
-					parameter.Name, text, strings.Join(choices, ", "))
-			}
-			length := utf8.RuneCountInString(text)
-			if _, isText := value.(string); isText && parameter.MaxLength > 0 && length > parameter.MaxLength {
-				return apikit.Errorf(apikit.KindUsage, "--%s has %d characters, at most %d are possible",
-					parameter.Name, length, parameter.MaxLength)
+			if err := checkValue(parameter, value, args); err != nil {
+				return err
 			}
 		}
+	}
+	return nil
+}
+
+// checkValue reports a value of a parameter that is none of its choices, or
+// longer than it may be.
+func checkValue(parameter *definition.Parameter, value any, args values) error {
+	text := apikit.Text(value)
+	if choices := parameterChoices(parameter, args); len(choices) > 0 && !slices.Contains(choices, text) {
+		return apikit.Errorf(apikit.KindUsage, "--%s %s is not possible here, choose from %s",
+			parameter.Name, text, strings.Join(choices, ", "))
+	}
+	length := utf8.RuneCountInString(text)
+	if _, isText := value.(string); isText && parameter.MaxLength > 0 && length > parameter.MaxLength {
+		return apikit.Errorf(apikit.KindUsage, "--%s has %d characters, at most %d are possible",
+			parameter.Name, length, parameter.MaxLength)
 	}
 	return nil
 }

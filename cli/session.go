@@ -110,7 +110,7 @@ func (a *App) ui() auth.UI {
 		// A completion must not ask for a password.
 		return nil
 	}
-	var ui auth.UI = terminal{in: a.opts.Streams.In, out: a.opts.Streams.Out, err: a.opts.Streams.Err}
+	var ui auth.UI = terminal{in: a.opts.Streams.In, out: a.opts.Streams.Out, err: a.opts.Streams.Err, lines: &pipedLines{}}
 	if a.opts.UI != nil {
 		ui = a.opts.UI
 	}

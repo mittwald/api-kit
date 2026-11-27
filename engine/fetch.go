@@ -2,8 +2,10 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"sync"
 
@@ -49,7 +51,36 @@ func (e *Engine) resolved(ctx context.Context, ref Ref) (Ref, error) {
 }
 
 // get sends the GET for what ref names. The ID of ref is taken as it is.
+// get fetches one page of what ref names: an item, or a listing put in the
+// order of its resource.
 func (e *Engine) get(ctx context.Context, ref Ref, query []Filter) (any, error) {
+	// A listing that is sorted or numbered here is fetched whole, wherever
+	// it is needed.
+	if listsItems(ref) && e.pagination() && e.arranges(described(ref)) {
+		return e.getAll(ctx, ref, query, e.doc.Pagination.PageSize)
+	}
+	value, err := e.page(ctx, ref, query)
+	if err != nil {
+		return nil, err
+	}
+	// Included fields come first: the listing may be sorted by one.
+	if value, err = e.include(ctx, described(ref), value); err != nil || !listsItems(ref) {
+		return value, err
+	}
+	return e.arrange(described(ref), value), nil
+}
+
+// page fetches what ref names as the API answers it, taken out of the
+// field of the response that holds it.
+func (e *Engine) page(ctx context.Context, ref Ref, query []Filter) (any, error) {
+	resource := e.doc.Resource(described(ref))
+	if listsItems(ref) {
+		for _, fixed := range resource.Query {
+			if !slices.ContainsFunc(query, func(filter Filter) bool { return filter.Key == fixed.Key }) {
+				query = append(query, Filter{Key: fixed.Key, Value: fixed.Value})
+			}
+		}
+	}
 	target, err := e.url("", ref, query)
 	if err != nil {
 		return nil, err
@@ -58,7 +89,81 @@ func (e *Engine) get(ctx context.Context, ref Ref, query []Filter) (any, error) 
 	if err != nil {
 		return nil, err
 	}
-	return e.request(ctx, call{method: http.MethodGet, url: target, header: header, resource: ref.Resource, id: ref.ID})
+	value, err := e.request(ctx, call{method: http.MethodGet, url: target, header: header, resource: ref.Resource, id: ref.ID})
+	if err != nil {
+		return nil, err
+	}
+	return unwrap(value, resource.ResponseField), nil
+}
+
+// pagination reports whether the API pages its listings.
+func (e *Engine) pagination() bool { return e.doc.Pagination.LimitParam != "" }
+
+// arranges reports whether listings of the resource are sorted or numbered
+// here.
+func (e *Engine) arranges(resource string) bool {
+	r := e.doc.Resource(resource)
+	return len(r.Sort) > 0 || r.Number != ""
+}
+
+// listsItems reports whether ref names a listing: of a resource, or of the
+// sub-resource of an item.
+func listsItems(ref Ref) bool { return ref.ID == "" || ref.Sub != "" }
+
+// described returns the resource whose definition describes what ref
+// names.
+func described(ref Ref) string {
+	if ref.Sub != "" {
+		return ref.Sub
+	}
+	return ref.Resource
+}
+
+// unwrap returns the value under field of an object the API wrapped its
+// answer in. A value without that field is returned as it is.
+func unwrap(value any, field string) any {
+	if field == "" {
+		return value
+	}
+	object, ok := value.(*apikit.Object)
+	if !ok {
+		return value
+	}
+	if inner, ok := object.Get(field); ok {
+		return inner
+	}
+	return value
+}
+
+// arrange puts a complete listing in the order the resource asks for and
+// numbers its items. Anything but a list is returned as it is.
+func (e *Engine) arrange(resource string, value any) any {
+	items, ok := value.([]any)
+	r := e.doc.Resource(resource)
+	if !ok || len(r.Sort) == 0 && r.Number == "" {
+		return value
+	}
+	items = slices.Clone(items)
+	if len(r.Sort) > 0 {
+		sortItems(items, r.Sort)
+	}
+	if r.Number != "" {
+		for i, item := range items {
+			object, ok := item.(*apikit.Object)
+			if !ok {
+				continue
+			}
+			// The listing may be cached and shared: the item is copied
+			// rather than changed.
+			numbered := apikit.NewObject()
+			for key, value := range object.All() {
+				numbered.Set(key, value)
+			}
+			numbered.Set(r.Number, json.Number(strconv.Itoa(i+1)))
+			items[i] = numbered
+		}
+	}
+	return items
 }
 
 // headers returns the headers a request for one item carries. The
@@ -110,10 +215,27 @@ type page struct {
 // list is asked no further.
 func (e *Engine) getAll(ctx context.Context, ref Ref, query []Filter, pageSize int) (any, error) {
 	pagination := e.doc.Pagination
+	// An API that takes no page size answers with every item at once.
+	if pagination.LimitParam == "" {
+		return e.get(ctx, ref, query)
+	}
 	query = upsert(query, pagination.LimitParam, strconv.Itoa(pageSize))
 	fetchPage := func(ctx context.Context, skip int) (any, error) {
-		return e.get(ctx, ref, upsert(query, pagination.SkipParam, strconv.Itoa(skip)))
+		return e.page(ctx, ref, upsert(query, pagination.SkipParam, strconv.Itoa(skip)))
 	}
+	items, err := e.pages(ctx, fetchPage, pageSize)
+	if err != nil {
+		return nil, err
+	}
+	if items, err = e.include(ctx, described(ref), items); err != nil {
+		return nil, err
+	}
+	return e.arrange(described(ref), items), nil
+}
+
+// pages fetches the pages of a listing with fetchPage until one comes back
+// short, several at a time, and returns their items in order.
+func (e *Engine) pages(ctx context.Context, fetchPage func(context.Context, int) (any, error), pageSize int) (any, error) {
 
 	e.fetched(0)
 	first, err := fetchPage(ctx, 0)

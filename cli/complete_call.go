@@ -51,10 +51,17 @@ func (a *App) completeCall(doc *definition.Document, command *cobra.Command, cal
 	}
 	// A word after the ID belongs to a list check whose words are still
 	// being typed; anything else here is the ID, which nothing is offered
-	// for.
+	// for, or the value of the positional parameter, which completes like
+	// its option.
+	positional := call.Positional()
 	command.ValidArgsFunction = func(cmd *cobra.Command, args []string, typed string) ([]cobra.Completion, cobra.ShellCompDirective) {
 		if pending := a.pending; pending != nil && (pending.Flag == flagIfNone || pending.Flag == flagIfAny) {
 			return completeListCheck(doc, call, pending.Words)(cmd, args, typed)
+		}
+		if positional != nil && (len(args) == 0 || positional.TakesList()) {
+			if complete, ok := cmd.GetFlagCompletionFunc(positional.Name); ok {
+				return complete(cmd, args, typed)
+			}
 		}
 		return nil, noFiles
 	}

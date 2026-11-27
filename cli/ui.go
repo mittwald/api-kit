@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/mittwald/cli-kit/browser"
 	"github.com/mittwald/cli-kit/pick"
@@ -21,6 +22,38 @@ type terminal struct {
 	in  io.Reader
 	out io.Writer
 	err io.Writer
+	// lines reads the answers of a login from a piped input, one line
+	// each.
+	lines *pipedLines
+}
+
+// pipedLines reads lines from an input that is no terminal, one answer
+// after the other. It reads a byte at a time, so that what follows the
+// answers is left for whoever reads the input next.
+type pipedLines struct{}
+
+// next returns the next line of in, without its line break. The last line
+// may lack one.
+func (p *pipedLines) next(in io.Reader) (string, error) {
+	var line []byte
+	b := make([]byte, 1)
+	for {
+		n, err := in.Read(b)
+		if n == 1 {
+			if b[0] == '\n' {
+				break
+			}
+			line = append(line, b[0])
+			continue
+		}
+		if errors.Is(err, io.EOF) && len(line) > 0 {
+			break
+		}
+		if err != nil {
+			return "", err
+		}
+	}
+	return strings.TrimRight(string(line), "\r"), nil
 }
 
 // files returns the streams to ask a question on, when both the input and
@@ -44,6 +77,15 @@ func (t terminal) Interactive() bool {
 // answer. What is typed for a secret is not shown.
 func (t terminal) Ask(_ context.Context, p definition.Prompt) (string, error) {
 	in, out, ok := t.files()
+	if !ok && t.piped() {
+		// A login run in a script gets its answers from standard input, one
+		// line each, in the order of the prompts.
+		answer, err := t.lines.next(t.in)
+		if err != nil {
+			return "", apikit.Errorf(apikit.KindUnauthenticated, "no line for %s on standard input: %w", p.Label, err)
+		}
+		return answer, nil
+	}
 	if !ok {
 		return "", apikit.Errorf(apikit.KindUnauthenticated, "cannot ask for %s without a terminal", p.Label)
 	}
@@ -58,6 +100,16 @@ func (t terminal) Ask(_ context.Context, p definition.Prompt) (string, error) {
 		return "", err
 	}
 	return answer, nil
+}
+
+// piped reports whether the input is a pipe or a file to read answers
+// from, rather than a terminal or nothing at all.
+func (t terminal) piped() bool {
+	if t.lines == nil || t.in == nil {
+		return false
+	}
+	file, ok := t.in.(*os.File)
+	return !ok || !term.IsTerminal(file)
 }
 
 // OpenBrowser opens a page in the browser of the desktop. It returns at

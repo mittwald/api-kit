@@ -44,6 +44,29 @@ func (e *Engine) convertParameters(call *definition.Call, args values, origin st
 // parameterTime returns the time a parameter of type time stands for, as
 // RFC 3339 text in its time zone: a preset of the parameter, or a time
 // [definition.ParseTime] reads.
+// applyDefaults gives the parameters of a call that were left out their
+// defaults, before the arguments are checked: the choices of a value may
+// depend on a default. Step parameters get theirs when their setter runs.
+func applyDefaults(call *definition.Call, args values) {
+	for _, parameter := range call.Parameters {
+		if parameter.Default != nil && !args.has(parameter.Name) {
+			args.set(parameter.Name, defaultValue(parameter))
+		}
+	}
+}
+
+// defaultValue returns the default of a parameter as a value given for it
+// is kept: a json.Number for a number, a list of one text for a list, and a
+// text for anything else. The definition checked that a default of a
+// number is one.
+func defaultValue(parameter *definition.Parameter) any {
+	value, err := parameterValue(parameter, parameter.Default)
+	if err != nil {
+		return apikit.Text(parameter.Default)
+	}
+	return value
+}
+
 func (e *Engine) parameterTime(parameter *definition.Parameter, text string) (string, error) {
 	zone := time.Local
 	if parameter.Timezone != "" {
@@ -52,15 +75,12 @@ func (e *Engine) parameterTime(parameter *definition.Parameter, text string) (st
 			return "", fmt.Errorf("has an unknown time zone %q", parameter.Timezone)
 		}
 	}
-	for _, preset := range parameter.Presets {
-		if preset.Key == text {
-			text = preset.Value
-			break
-		}
-	}
-	parsed, err := definition.ParseTime(text, e.now().In(zone))
+	parsed, err := parameter.ParseTime(text, e.now().In(zone))
 	if err != nil {
 		return "", err
+	}
+	if parameter.SendLayout != "" {
+		return parsed.In(zone).Format(parameter.SendLayout), nil
 	}
 	// Fractions of a second that were given are kept.
 	return parsed.Format(time.RFC3339Nano), nil

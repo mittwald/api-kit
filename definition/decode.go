@@ -2,10 +2,15 @@ package definition
 
 import (
 	"encoding/json"
+	"math"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	"github.com/mittwald/cli-kit/table"
 
 	apikit "github.com/mittwald/api-kit"
 	"github.com/mittwald/api-kit/expr"
@@ -202,6 +207,13 @@ func (l *loader) output(m mapping, doc *Document) {
 	if output.has("nameFields") {
 		doc.Output.NameFields = output.texts("nameFields")
 	}
+	doc.Output.Omit = output.texts("omit")
+	doc.Output.TableStyle = output.text("tableStyle", "")
+	if doc.Output.TableStyle != "" {
+		if _, ok := table.LookupStyle(doc.Output.TableStyle); !ok {
+			l.problemf(output.at("tableStyle"), "unknown table style %q, there are: %s", doc.Output.TableStyle, strings.Join(table.StyleNames(), ", "))
+		}
+	}
 	for i, source := range output.texts("keepWhole") {
 		if pattern := l.pattern(index(output.at("keepWhole"), i), source); pattern != nil {
 			doc.Output.KeepWhole = append(doc.Output.KeepWhole, pattern)
@@ -256,6 +268,10 @@ func (l *loader) resource(path, name string, value any) *Resource {
 		Filters:         m.texts("filters"),
 		RequiredFilters: m.texts("requiredFilters"),
 		Conditions:      m.texts("conditions"),
+		ResponseField:   m.text("responseField", ""),
+		Query:           m.pairs("query"),
+		Sort:            l.sorts(m),
+		Number:          m.text("number", ""),
 		defined:         true,
 	}
 	for i, item := range m.items("headers") {
@@ -296,6 +312,14 @@ func (l *loader) resource(path, name string, value any) *Resource {
 			resource.Joins = append(resource.Joins, join)
 		}
 	}
+	for i, item := range m.items("include") {
+		include, ok := l.mapping(index(m.at("include"), i), item)
+		if !ok {
+			continue
+		}
+		resource.Include = append(resource.Include, Include{Resource: include.required("resource"), Fields: include.pairs("fields")})
+		include.finish()
+	}
 	for i, item := range m.items("idAliases") {
 		alias, ok := l.mapping(index(m.at("idAliases"), i), item)
 		if !ok {
@@ -331,6 +355,25 @@ func (l *loader) resource(path, name string, value any) *Resource {
 	return resource
 }
 
+// sorts decodes the sort orders under "sort": mappings of a column and
+// a direction, asc or desc.
+func (l *loader) sorts(m mapping) []Sort {
+	var sorts []Sort
+	for i, item := range m.items("sort") {
+		sort, ok := l.mapping(index(m.at("sort"), i), item)
+		if !ok {
+			continue
+		}
+		direction := sort.text("direction", "asc")
+		if direction != "asc" && direction != "desc" {
+			l.problemf(sort.at("direction"), "must be asc or desc, not %q", direction)
+		}
+		sorts = append(sorts, Sort{Column: sort.required("column"), Descending: direction == "desc"})
+		sort.finish()
+	}
+	return sorts
+}
+
 // required returns the string under key and reports a missing or empty one.
 func (m mapping) required(key string) string {
 	text := m.text(key, "")
@@ -359,11 +402,26 @@ func (l *loader) column(path string, value any) (Column, bool) {
 	column := Column{Paths: m.texts("paths")}
 	if len(column.Paths) == 0 {
 		l.problemf(m.at("paths"), "needs at least one path")
-		m.used["label"] = true
+		for _, key := range []string{"label", "values", "format", "align", "style"} {
+			m.used[key] = true
+		}
 		m.finish()
 		return Column{}, false
 	}
 	column.Label = m.text("label", column.Paths[0])
+	column.Values = m.pairs("values")
+	column.Format = m.text("format", "")
+	if column.Format != "" && l.reserved.CellFormats != nil && !slices.Contains(l.reserved.CellFormats, column.Format) {
+		l.problemf(m.at("format"), "unknown format %q, the tool writes: %s", column.Format, strings.Join(l.reserved.CellFormats, ", "))
+	}
+	column.Align = m.text("align", "")
+	if column.Align != "" && !slices.Contains([]string{AlignLeft, AlignRight, AlignCenter}, column.Align) {
+		l.problemf(m.at("align"), "must be left, right or center, not %q", column.Align)
+	}
+	column.Style = m.text("style", "")
+	if column.Style != "" && column.Style != StyleBold && column.Style != StyleItalic {
+		l.problemf(m.at("style"), "must be bold or italic, not %q", column.Style)
+	}
 	m.finish()
 	return column, true
 }
@@ -412,6 +470,8 @@ func (l *loader) join(path string, value any) *Join {
 		Resource:   m.required("resource"),
 		Many:       m.flag("many", false),
 		Conditions: m.pairs("conditions"),
+		By:         m.text("by", ""),
+		Exists:     m.flag("exists", false),
 	}
 	// "column" is the path to the related ID, or the fields that hold
 	// relation entries when conditions pick the entry.
@@ -422,6 +482,10 @@ func (l *loader) join(path string, value any) *Join {
 		join.RelationFields = l.texts(m.at("column"), column)
 	default:
 		l.problemf(m.at("column"), "must be a path or a list of fields, not %s", kindOf(column))
+	}
+	// Whether a related item exists is one value, however many there are.
+	if join.Exists && join.Many {
+		l.problemf(m.at("exists"), "is one value, true or false, for any number of related items; leave out 'many'")
 	}
 	if len(join.RelationFields) > 0 && len(join.Conditions) == 0 {
 		l.problemf(m.at("column"), "a list of fields needs 'conditions' that pick the relation entry")
@@ -437,18 +501,7 @@ func (l *loader) join(path string, value any) *Join {
 			l.problemf(m.at("join"), "must be a field or a list of fields, not %s", kindOf(fields))
 		}
 	}
-	for i, item := range m.items("sort") {
-		sort, ok := l.mapping(index(m.at("sort"), i), item)
-		if !ok {
-			continue
-		}
-		direction := sort.text("direction", "asc")
-		if direction != "asc" && direction != "desc" {
-			l.problemf(sort.at("direction"), "must be asc or desc, not %q", direction)
-		}
-		join.Sort = append(join.Sort, Sort{Column: sort.required("column"), Descending: direction == "desc"})
-		sort.finish()
-	}
+	join.Sort = l.sorts(m)
 	// "nested" is one join or a list of joins.
 	switch nested, present := m.get("nested"); nested := nested.(type) {
 	case []any:
@@ -464,6 +517,11 @@ func (l *loader) join(path string, value any) *Join {
 			}
 		}
 	}
+	for _, child := range join.Nested {
+		if child.By != "" || child.Exists {
+			l.problemf(m.at("nested"), "a nested join is fetched by the ID of its item; 'by' and 'exists' are for the joins of a resource")
+		}
+	}
 	m.finish()
 	return join
 }
@@ -474,19 +532,21 @@ func (l *loader) setter(path string, value any) *Setter {
 		return nil
 	}
 	setter := &Setter{
-		Name:         m.required(keyName),
-		Aliases:      m.texts(keyAliases),
-		Help:         m.text("help", ""),
-		Method:       strings.ToUpper(m.text("method", defaultMethod)),
-		API:          m.text("api", ""),
-		Resource:     m.text("resource", ""),
-		RequiresID:   m.flag("requiresId", true),
-		PathTemplate: m.text("pathTemplate", ""),
-		Message:      m.text("message", ""),
-		Token:        m.text("token", ""),
-		Headers:      m.pairs("headers"),
-		Encoding:     m.text("encoding", EncodingJSON),
-		path:         path,
+		Name:          m.required(keyName),
+		Aliases:       m.texts(keyAliases),
+		Help:          m.text("help", ""),
+		Method:        strings.ToUpper(m.text("method", defaultMethod)),
+		API:           m.text("api", ""),
+		Resource:      m.text("resource", ""),
+		ResponseField: m.text("responseField", ""),
+		RequiresID:    m.flag("requiresId", true),
+		PathTemplate:  m.text("pathTemplate", ""),
+		Message:       m.text("message", ""),
+		HideResponse:  m.flag("hideResponse", false),
+		Token:         m.text("token", ""),
+		Headers:       m.pairs("headers"),
+		Encoding:      m.text("encoding", EncodingJSON),
+		path:          path,
 	}
 	switch setter.Encoding {
 	case EncodingJSON:
@@ -583,7 +643,23 @@ func (l *loader) parameter(path string, value any, step bool) *Parameter {
 	parameter.List = m.flag("list", false)
 	parameter.Timezone = m.text("timezone", "")
 	parameter.Presets = m.pairs("presets")
+	parameter.Layouts = m.texts("layouts")
+	parameter.DayTime = m.text("dayTime", "")
+	parameter.SendLayout = m.text("sendLayout", "")
+	if value, ok := m.get("default"); ok {
+		switch value.(type) {
+		case string, json.Number:
+			parameter.Default = value
+		default:
+			l.problemf(m.at("default"), "must be a string or a number")
+		}
+		if parameter.Required {
+			l.problemf(m.at("default"), "a required parameter is always given, so it has no default")
+		}
+		l.checkDefault(m, parameter)
+	}
 	parameter.Format = m.text("format", "")
+	parameter.Positional = m.flag("positional", false)
 	isString := parameter.Type == TypeString
 	switch parameter.Type {
 	case TypeString, TypeInt, TypeFloat, TypeList, TypeFile:
@@ -601,7 +677,7 @@ func (l *loader) parameter(path string, value any, step bool) *Parameter {
 		l.problemf(m.at("list"), "only a parameter of type file takes a list; use type list for texts")
 	}
 	if parameter.Type != TypeTime {
-		for _, key := range []string{"timezone", "presets"} {
+		for _, key := range []string{"timezone", "presets", "layouts", "dayTime", "sendLayout"} {
 			if m.has(key) {
 				l.problemf(m.at(key), "only a parameter of type time has it")
 			}
@@ -688,9 +764,63 @@ func (l *loader) parameter(path string, value any, step bool) *Parameter {
 	return parameter
 }
 
+// checkDefault reports a default that a value given for the parameter could
+// not be: no number for a number, none of the choices, or too long.
+func (l *loader) checkDefault(m mapping, parameter *Parameter) {
+	text := apikit.Text(parameter.Default)
+	switch parameter.Type {
+	case TypeInt:
+		if _, err := strconv.ParseInt(text, 10, 64); err != nil {
+			l.problemf(m.at("default"), "must be a whole number for a parameter of type int, not %q", text)
+		}
+	case TypeFloat:
+		if number, err := strconv.ParseFloat(text, 64); err != nil || math.IsNaN(number) || math.IsInf(number, 0) {
+			l.problemf(m.at("default"), "must be a number for a parameter of type float, not %q", text)
+		}
+	case TypeBool, TypeFile:
+		l.problemf(m.at("default"), "a parameter of type %s has no default", parameter.Type)
+	}
+	if choices := parameterChoiceValues(m); len(choices) > 0 && !slices.Contains(choices, text) {
+		l.problemf(m.at("default"), "%q is none of the choices %s", text, strings.Join(choices, ", "))
+	}
+	if length := utf8.RuneCountInString(text); parameter.MaxLength > 0 && length > parameter.MaxLength {
+		l.problemf(m.at("default"), "has %d characters, at most %d are possible", length, parameter.MaxLength)
+	}
+}
+
+// parameterChoiceValues returns the choices a parameter's mapping lists,
+// read without marking them used.
+func parameterChoiceValues(m mapping) []string {
+	value, _ := m.object.Get("choices")
+	list, _ := value.([]any)
+	var choices []string
+	for _, item := range list {
+		if text, ok := item.(string); ok {
+			choices = append(choices, text)
+		}
+	}
+	return choices
+}
+
 // timeParameter checks what a parameter of type time has: a time zone that
 // exists, and presets that are times.
 func (l *loader) timeParameter(m mapping, parameter *Parameter) {
+	if parameter.DayTime != "" {
+		match := clockTime.FindStringSubmatch(parameter.DayTime)
+		hour, minute := -1, -1
+		if match != nil {
+			hour, _ = strconv.Atoi(match[1])
+			minute, _ = strconv.Atoi(match[2])
+		}
+		if hour < 0 || hour > 23 || minute > 59 {
+			l.problemf(m.at("dayTime"), "must be a time of day as in 12:00, not %q", parameter.DayTime)
+		}
+	}
+	if text, ok := parameter.Default.(string); ok {
+		if _, err := parameter.ParseTime(text, time.Now()); err != nil {
+			l.problemf(m.at("default"), "%v", err)
+		}
+	}
 	if parameter.Timezone != "" {
 		if _, err := time.LoadLocation(parameter.Timezone); err != nil {
 			l.problemf(m.at("timezone"), "unknown time zone %q", parameter.Timezone)
@@ -698,7 +828,7 @@ func (l *loader) timeParameter(m mapping, parameter *Parameter) {
 	}
 	reference := time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
 	for _, preset := range parameter.Presets {
-		if _, err := ParseTime(preset.Value, reference); err != nil {
+		if _, err := parameter.ParseTime(preset.Value, reference); err != nil {
 			l.problemf(join(m.at("presets"), preset.Key), "%v", err)
 		}
 	}

@@ -2,11 +2,13 @@ package output_test
 
 import (
 	"bytes"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	clitable "github.com/mittwald/cli-kit/table"
 	"github.com/mittwald/cli-kit/theme"
 
 	"github.com/mittwald/api-kit/definition"
@@ -65,63 +67,15 @@ func TestParseStyleWithout24BitColors(t *testing.T) {
 	}
 }
 
-func TestNewPalette(t *testing.T) {
-	defaults := output.NewPalette(nil, "")
-	if defaults.Header != "38;5;248;1" || defaults.Age != "38;5;245" || defaults.FreshAge != "38;5;40;1" || len(defaults.Columns) != 6 || defaults.Columns[0] != "38;5;38" {
-		t.Errorf("default palette = %+v", defaults)
+// The palette and ages are those of cli-kit, whose tests cover them; the
+// deprecated wrappers still give them.
+func TestDeprecatedWrappers(t *testing.T) {
+	if got, want := output.NewPalette(nil, ""), clitable.NewPalette(nil, ""); !reflect.DeepEqual(got, want) { //nolint:staticcheck // the deprecated wrapper is what is tested
+		t.Errorf("NewPalette = %+v, want %+v", got, want)
 	}
-	env := map[string]string{
-		"EXAMPLE_COLOR_TABLE_HEADER":   "red:bold",
-		"EXAMPLE_COLOR_TABLE_COLUMN_2": "blue",
-		"EXAMPLE_COLOR_TABLE_COLUMN_3": "nonsense", // ignored
-		"EXAMPLE_TEXT_COLOR_DURATION":  "gray",
-		"EXAMPLE_TEXT_DURATION_FRESH":  "green",
-	}
-	changed := output.NewPalette(func(name string) string { return env[name] }, "EXAMPLE")
-	if changed.Header != "31;1" || changed.Age != "37" || changed.FreshAge != "32" ||
-		changed.Columns[0] != defaults.Columns[0] || changed.Columns[1] != "34" || changed.Columns[2] != defaults.Columns[2] {
-		t.Errorf("palette from the environment = %+v", changed)
-	}
-}
-
-func TestAge(t *testing.T) {
 	now := time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC)
-	tests := []struct {
-		ago  time.Duration
-		want string
-	}{
-		{0, "now"},
-		{500 * time.Millisecond, "now"},
-		{time.Second, "a second ago"},
-		{59 * time.Second, "59 seconds ago"},
-		{time.Minute, "a minute ago"},
-		{119 * time.Second, "a minute ago"},
-		{2 * time.Minute, "2 minutes ago"},
-		{59 * time.Minute, "59 minutes ago"},
-		{time.Hour, "an hour ago"},
-		{2*time.Hour - time.Second, "an hour ago"},
-		{2 * time.Hour, "2 hours ago"},
-		{23 * time.Hour, "23 hours ago"},
-		{24 * time.Hour, "a day ago"},
-		{30 * 24 * time.Hour, "30 days ago"},
-		{31 * 24 * time.Hour, "a month ago"},
-		{61 * 24 * time.Hour, "2 months ago"},
-		{364 * 24 * time.Hour, "11 months ago"},
-		{365 * 24 * time.Hour, "a year ago"},
-		{366 * 24 * time.Hour, "1 year, 1 day ago"},
-		{(365 + 20) * 24 * time.Hour, "1 year, 20 days ago"},
-		{(365 + 31) * 24 * time.Hour, "1 year, 1 month ago"},
-		{(365 + 100) * 24 * time.Hour, "1 year, 3 months ago"},
-		{2 * 365 * 24 * time.Hour, "2 years ago"},
-		{12 * 365 * 24 * time.Hour, "12 years ago"},
-		{-time.Second, "a second from now"},
-		{-3 * time.Hour, "3 hours from now"},
-		{-48 * time.Hour, "2 days from now"},
-	}
-	for _, tt := range tests {
-		if got := output.Age(now.Add(-tt.ago), now); got != tt.want {
-			t.Errorf("Age(%v ago) = %q, want %q", tt.ago, got, tt.want)
-		}
+	if got := output.Age(now.Add(-3*time.Hour), now); got != "3 hours ago" { //nolint:staticcheck // the deprecated wrapper is what is tested
+		t.Errorf("Age = %q", got)
 	}
 }
 
@@ -180,7 +134,7 @@ func TestWriteTableShowsValuesPlain(t *testing.T) {
 	for name, options := range map[string]output.TableOptions{
 		"plain":   {Format: output.Text},
 		"wide":    {Format: output.Wide},
-		"painted": {Format: output.Text, Color: true, Links: true, Palette: output.NewPalette(nil, "")},
+		"painted": {Format: output.Text, Color: true, Links: true, Palette: clitable.NewPalette(nil, "")},
 	} {
 		var out bytes.Buffer
 		if err := output.WriteTable(&out, table, options); err != nil {
@@ -284,7 +238,7 @@ func TestWriteTablePaintsAndLinks(t *testing.T) {
 		// Headings in the header style.
 		"\x1b[1mID ", "\x1b[1mSTATUS",
 		// The first cell is a link, painted in the first palette color.
-		"\x1b]8;;https://app.example.test/p-1\x1b\\\x1b[34mp-1" + reset + "\x1b]8;;\x1b\\",
+		"\x1b[34m\x1b]8;;https://app.example.test/p-1\x1b\\p-1\x1b]8;;\x1b\\" + reset,
 		// The status column has rules: the cell is faded, matches are
 		// painted and the fade resumes after each.
 		reset + "\x1b[31mopen" + reset + "\x1b[2m and " + reset + "\x1b[33murgent" + reset + "\x1b[2m" + reset,

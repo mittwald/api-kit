@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"context"
+
 	"github.com/spf13/cobra"
 
+	apikit "github.com/mittwald/api-kit"
 	"github.com/mittwald/api-kit/definition"
 	"github.com/mittwald/api-kit/engine"
 )
@@ -58,4 +61,39 @@ func (e *Env) Render(cmd *cobra.Command, result *engine.Result) error {
 // works but has a replacement.
 func (e *Env) Deprecated(what, replacement string) {
 	e.app.deprecated(what, replacement)
+}
+
+// Login logs in with a login method of the definition and stores the
+// session, as "auth login" does: with method, or with the method an
+// interactive run falls back to, or the only one there is, when method is
+// empty. Requests of this run then carry the new session.
+func (e *Env) Login(ctx context.Context, method string) error {
+	if e.doc == nil {
+		return apikit.Errorf(apikit.KindUsage, "the tool has no definition to log in with")
+	}
+	if method == "" {
+		method = e.doc.Auth.Login.Fallback
+	}
+	if methods := e.doc.Auth.Login.Methods; method == "" && len(methods) == 1 {
+		method = methods[0].Name
+	}
+	if method == "" {
+		return apikit.Errorf(apikit.KindUsage, "the definition names no login method to use")
+	}
+	session, err := e.app.session(e.doc)
+	if err != nil {
+		return err
+	}
+	_, err = session.auth.Login(ctx, method)
+	return failed(err)
+}
+
+// OutputFormat returns the output format the user asked for with --output,
+// such as "text" or "json", without its argument.
+func (e *Env) OutputFormat() (string, error) {
+	spec, err := e.app.globals.spec()
+	if err != nil {
+		return "", err
+	}
+	return string(spec.Format), nil
 }

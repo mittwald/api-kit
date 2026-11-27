@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	apikit "github.com/mittwald/api-kit"
+	"github.com/mittwald/api-kit/definition"
 )
 
 // GetRequest says what [Engine.Get] fetches.
@@ -77,8 +78,11 @@ func (e *Engine) Get(ctx context.Context, r GetRequest) (*Result, error) {
 	}
 	if listing {
 		var missing []string
-		for _, key := range e.doc.Resource(described).RequiredFilters {
-			if !slices.ContainsFunc(r.Filters, func(filter Filter) bool { return filter.Key == key }) {
+		resource := e.doc.Resource(described)
+		for _, key := range resource.RequiredFilters {
+			given := func(filter Filter) bool { return filter.Key == key }
+			fixed := func(pair definition.Pair) bool { return pair.Key == key }
+			if !slices.ContainsFunc(r.Filters, given) && !slices.ContainsFunc(resource.Query, fixed) {
 				missing = append(missing, key)
 			}
 		}
@@ -106,8 +110,14 @@ func (e *Engine) Get(ctx context.Context, r GetRequest) (*Result, error) {
 		query = upsert(query, pagination.SkipParam, strconv.Itoa(*r.Skip))
 	}
 
+	// A listing that is sorted or numbered here is fetched whole: a page
+	// of it would be sorted and numbered on its own.
+	arranged := listing && e.arranges(described)
+	if arranged && (r.Page != nil || r.Skip != nil) {
+		return nil, apikit.Errorf(apikit.KindUsage, "%s are sorted and numbered as a whole, so they cannot be fetched by page", described)
+	}
 	var value any
-	if r.All && listing {
+	if (r.All || arranged) && listing {
 		value, err = e.fetchAll(ctx, r.Ref, query, limit)
 	} else {
 		e.fetched(0)
@@ -174,4 +184,48 @@ func (e *Engine) filterIDs(ctx context.Context, filters []Filter) ([]Filter, err
 		}
 	}
 	return resolved, nil
+}
+
+// include adds to the items of value the fields the resource includes from
+// other resources. The items are copied, since a cached answer may be
+// shared.
+func (e *Engine) include(ctx context.Context, resource string, value any) (any, error) {
+	includes := e.doc.Resource(resource).Include
+	if len(includes) == 0 {
+		return value, nil
+	}
+	sources := make([]any, len(includes))
+	for i, include := range includes {
+		source, err := e.fetch(ctx, Ref{Resource: include.Resource}, nil)
+		if err != nil {
+			return nil, err
+		}
+		sources[i] = source
+	}
+	extend := func(item any) any {
+		object, ok := item.(*apikit.Object)
+		if !ok {
+			return item
+		}
+		extended := apikit.NewObject()
+		for key, value := range object.All() {
+			extended.Set(key, value)
+		}
+		for i, include := range includes {
+			for _, field := range include.Fields {
+				if found := at(sources[i], field.Value); found != nil {
+					extended.Set(field.Key, found)
+				}
+			}
+		}
+		return extended
+	}
+	if items, ok := value.([]any); ok {
+		extended := make([]any, len(items))
+		for i, item := range items {
+			extended[i] = extend(item)
+		}
+		return extended, nil
+	}
+	return extend(value), nil
 }

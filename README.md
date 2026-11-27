@@ -104,6 +104,21 @@ terminal unless `NO_COLOR` or `TERM=dumb` is set. Set
 `cli.Options.CompletionInstall` to give `completion bash|zsh|fish` an
 `--install` flag that writes the script where the shell loads it from.
 
+A definition also fits APIs that do things their own way. A resource can
+take its items out of a field the API wraps them in (`responseField`), send
+fixed query parameters (`query`), sort and number a listing itself (`sort`,
+`number`), add fields of other answers (`include`), and join items that can
+only be found in a listing (`by`, `exists`). Columns can map values to text,
+name a format of the tool (`cli.Options.CellFormats`), and set their
+alignment and style; `output.tableStyle` draws tables in one of cli-kit's
+styles, and `output.omit` leaves fields such as a token out of everything
+shown. A parameter can be the argument of its command (`positional`), have
+a default, and a time can be written in further layouts and sent in one.
+`auth.renew` takes a new token out of the answers of an API that hands one
+out, and a password login reads its answers from standard input when that
+is no terminal. `cli.Options.CallResults` and `Env.Login` let a host show
+the result of a call its own way and log in from a command of its own.
+
 Sessions are kept in the keyring of the operating system, with files as a
 fallback, unless `cli.Options.Store` names another store. `auth.ErrNotFound`
 is cli-kit's `secret.ErrNotFound`, so any store of cli-kit's `secret`

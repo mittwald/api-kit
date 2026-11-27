@@ -323,6 +323,39 @@ func (m *Manager) Confirmed(token string) {
 	}
 }
 
+// Answered is to be called with what the API answered a request that
+// carried token. When the definition says that responses renew the session
+// and value holds another token, that token is used from now on, and
+// replaces the stored session when token came from the store. A new token
+// that cannot be stored is used all the same: the stored one still works
+// until it expires.
+func (m *Manager) Answered(token string, value any) {
+	renew := m.o.Config.Renew
+	object, ok := value.(*apikit.Object)
+	if renew == nil || !ok {
+		return
+	}
+	fresh, err := sessionFrom(renew.Session, object)
+	if err != nil || fresh.Token == "" || fresh.Token == token {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.token != token || m.o.Explicit != "" {
+		return
+	}
+	if stored := m.load(); stored.Token == token {
+		// The session goes on: what renews it stays with it.
+		if fresh.RefreshToken == "" {
+			fresh.RefreshToken = stored.RefreshToken
+		}
+		if _, err := m.save(fresh); err != nil {
+			m.o.Log.Warn("cannot store the renewed session", "account", m.o.Account, "error", err)
+		}
+	}
+	m.token, m.confirmed = fresh.Token, true
+}
+
 // Authorize sets the header that carries the token on req.
 func (m *Manager) Authorize(req *http.Request, token string) {
 	value, _ := m.header.Render(lookup(map[string]string{definition.VariableToken: token}), expr.RenderOptions{})

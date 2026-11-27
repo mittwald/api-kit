@@ -249,6 +249,7 @@ func (r *callRun) callStep(ctx context.Context, step *definition.Step, vals valu
 	if err != nil {
 		return nil, err
 	}
+	applyDefaults(call, args)
 	if err := r.e.convertParameters(call, args, ""); err != nil {
 		return nil, stepError(step, err)
 	}

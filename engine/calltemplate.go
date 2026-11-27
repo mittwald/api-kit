@@ -389,6 +389,17 @@ func (r *callRun) fill(ctx context.Context, in CallInput) error {
 			return err
 		}
 	}
+	// A parameter that is left out, by the command line and the call
+	// template alike, has its default from here on, for the templates too.
+	// The setters of a shared call are picked by what was given, so there
+	// the defaults come after.
+	if !call.Shared() {
+		for _, parameter := range call.Parameters {
+			if parameter.Default != nil && !r.args.has(parameter.Name) && !templated(parameter.Name) {
+				r.args.set(parameter.Name, defaultValue(parameter))
+			}
+		}
+	}
 
 	if !call.Shared() {
 		setter := call.Setters[0]
@@ -448,8 +459,14 @@ func (r *callRun) fill(ctx context.Context, in CallInput) error {
 	}
 	maps.Copy(seen, variables)
 	for _, parameter := range slices.Concat(call.Parameters, call.StepParameters) {
-		if value, ok := r.args.scalar(parameter.Name); ok && !parameter.Template {
+		value, ok := r.args.scalar(parameter.Name)
+		switch {
+		case ok && !parameter.Template:
 			seen.set(parameter.Name, value)
+		case !ok && !r.args.has(parameter.Name) && !templated(parameter.Name) && parameter.Default != nil:
+			// The default of a shared call, which takes it once its setters
+			// are picked; the templates see it now.
+			seen.set(parameter.Name, parameter.Default)
 		}
 	}
 	if in.ID != "" {

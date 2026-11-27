@@ -58,6 +58,10 @@ type Auth struct {
 	// Refresh renews a session with its refresh token. Nil means that
 	// sessions cannot be renewed.
 	Refresh *SessionRefresh
+	// Renew takes a new token out of the responses of the API, for an API
+	// that hands one out with its answers when the current one nears its
+	// end. Nil means that responses carry none.
+	Renew *SessionRenewal
 	// Login describes the ways to obtain a session interactively.
 	Login Login
 }
@@ -140,6 +144,15 @@ type SessionRefresh struct {
 	// LeewaySeconds is how long before its expiry a stored session is
 	// renewed, in place of waiting for the API to reject it.
 	LeewaySeconds float64
+	// Session says where the response holds the new session.
+	Session SessionFields
+}
+
+// SessionRenewal says where a response of the API holds a new session.
+// A response whose object has a token there other than the one the request
+// was sent with replaces the session: the stored one, when the token came
+// from the store, and the token of the rest of the run in any case.
+type SessionRenewal struct {
 	// Session says where the response holds the new session.
 	Session SessionFields
 }
@@ -287,6 +300,10 @@ func (l *loader) auth(m mapping, doc *Document) {
 			Session:       l.sessionFields(refresh),
 		}
 		refresh.finish()
+	}
+	if renew, ok := auth.child("renew"); ok {
+		doc.Auth.Renew = &SessionRenewal{Session: l.sessionFields(renew)}
+		renew.finish()
 	}
 	if login, ok := auth.child("login"); ok {
 		doc.Auth.Login = l.login(login, doc)

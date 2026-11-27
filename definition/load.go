@@ -25,6 +25,10 @@ type Reserved struct {
 	// Formats are the formats the tool checks values of. A parameter that
 	// names another format is a mistake. Nil allows any.
 	Formats []string
+	// CellFormats are the formats the tool writes the values of a column
+	// with. A column that names another format is a mistake. Nil allows
+	// any.
+	CellFormats []string
 }
 
 // LoadOptions tell [Load] what to merge into the base definition and which

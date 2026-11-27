@@ -55,6 +55,10 @@ func ParseFilters(args []string) ([]Filter, error) {
 // name gets the value, further ones are dropped, and a new one goes to the
 // end. query itself is not changed.
 func upsert(query []Filter, key, value string) []Filter {
+	// A definition that names no such parameter sends none.
+	if key == "" {
+		return query
+	}
 	updated := make([]Filter, 0, len(query)+1)
 	replaced := false
 	for _, filter := range query {
