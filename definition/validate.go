@@ -37,6 +37,33 @@ func (l *loader) validate(doc *Document) {
 			}
 		}
 		l.setters(doc, resource, path)
+		l.includes(doc, resource, path)
+	}
+}
+
+// includes checks that what a resource includes does not lead back to it:
+// each answer would ask for the other one without end.
+func (l *loader) includes(doc *Document, resource *Resource, path string) {
+	for i, include := range resource.Include {
+		seen := map[string]bool{resource.Name: true}
+		next := []string{include.Resource}
+		for len(next) > 0 {
+			name := next[0]
+			next = next[1:]
+			if seen[name] {
+				if name == resource.Name {
+					l.problemf(join(index(join(path, "include"), i), "resource"), "%q includes %q again, which would be fetched without end", include.Resource, resource.Name)
+					next = nil
+				}
+				continue
+			}
+			seen[name] = true
+			if other, ok := doc.byName[name]; ok {
+				for _, inner := range other.Include {
+					next = append(next, inner.Resource)
+				}
+			}
+		}
 	}
 }
 
@@ -76,6 +103,7 @@ func (l *loader) setters(doc *Document, resource *Resource, path string) {
 		}
 		l.setterAliases(setter, names, aliasCalls)
 		l.parameterNames(setter, c)
+		l.positional(setter, resource)
 		if setter.API != "" {
 			l.knownAPI(join(setter.path, "api"), doc, setter.API)
 		}
@@ -442,6 +470,8 @@ func (l *loader) parameterGroups(setter *Setter, c *call) {
 					continue
 				case parameter.Required:
 					l.problemf(path, "parameter %q is required and cannot be in a group", name)
+				case parameter.Default != nil:
+					l.problemf(path, "parameter %q has a default and cannot be in a group", name)
 				}
 				if slices.Contains(c.grouped, name) {
 					l.problemf(path, "parameter %q is in more than one group", name)
@@ -557,6 +587,44 @@ func collectPlaceholders(v any, seen map[string]bool, plain bool) {
 		for key, item := range value.All() {
 			collectPlaceholders(key, seen, plain)
 			collectPlaceholders(item, seen, plain)
+		}
+	}
+}
+
+// positional checks the parameters given as the argument of a command: one
+// for the whole call, whichever of its setters has it, and none in a call
+// that takes the ID of an item as its argument.
+func (l *loader) positional(setter *Setter, resource *Resource) {
+	var mine string
+	for _, parameter := range setter.Parameters {
+		if !parameter.Positional {
+			continue
+		}
+		if mine != "" {
+			l.problemf(join(setter.path, keyParameters), "only one parameter can be positional, not %s and %s", mine, parameter.Name)
+			return
+		}
+		mine = parameter.Name
+	}
+	if mine == "" {
+		return
+	}
+	for _, other := range resource.Setters {
+		if other.Name != setter.Name {
+			continue
+		}
+		if other.RequiresID {
+			l.problemf(join(setter.path, keyParameters), "%s cannot be positional: %s takes the ID of an item as its argument", mine, setter.Name)
+			return
+		}
+		if other == setter {
+			continue
+		}
+		for _, parameter := range other.Parameters {
+			if parameter.Positional && parameter.Name != mine {
+				l.problemf(join(setter.path, keyParameters), "only one parameter of the %s setters can be positional, not %s and %s", setter.Name, mine, parameter.Name)
+				return
+			}
 		}
 	}
 }

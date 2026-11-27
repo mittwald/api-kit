@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	clitable "github.com/mittwald/cli-kit/table"
 	"github.com/mittwald/cli-kit/term"
 
 	apikit "github.com/mittwald/api-kit"
@@ -29,6 +30,8 @@ func (a *App) render(cmd *cobra.Command, session *session, result *engine.Result
 	if apikit.Falsy(result.Value) {
 		return nil
 	}
+	// Fields the definition leaves out are taken out of what is written,
+	// after the joins, which may need them.
 	items := result.Items()
 	if v.sortBy != "" {
 		if _, isList := result.Value.([]any); isList {
@@ -48,13 +51,13 @@ func (a *App) render(cmd *cobra.Command, session *session, result *engine.Result
 	// What the API returned needs nothing more.
 	switch format {
 	case output.JSONRaw:
-		return failed(output.WriteJSON(w, items))
+		return failed(output.WriteJSON(w, omittedItems(session, items)))
 	case output.ID:
-		return failed(output.WriteIDs(w, items, func(item *apikit.Object) (string, bool) {
+		return failed(output.WriteIDs(w, omittedItems(session, items), func(item *apikit.Object) (string, bool) {
 			return session.engine.IDOf(result.Resource, item)
 		}))
 	case output.Name:
-		return failed(output.WriteNames(w, items, session.doc.Output.NameFields))
+		return failed(output.WriteNames(w, omittedItems(session, items), session.doc.Output.NameFields))
 	}
 
 	joins := !a.globals.noJoins
@@ -69,7 +72,14 @@ func (a *App) render(cmd *cobra.Command, session *session, result *engine.Result
 		if err != nil {
 			return failed(err)
 		}
-		table := output.Table{Rows: projected.Rows, Links: projected.Links}
+		// Project read the cells without what the definition leaves out;
+		// what joins found may still hold it.
+		rows := make([][]any, len(projected.Rows))
+		for i, row := range projected.Rows {
+			rows[i] = omittedItems(session, row)
+		}
+		table := output.Table{Rows: rows, Links: projected.Links}
+		description := projected.Columns
 		for _, column := range projected.Columns {
 			table.Headers = append(table.Headers, column.Label)
 		}
@@ -81,8 +91,11 @@ func (a *App) render(cmd *cobra.Command, session *session, result *engine.Result
 			MaxCharacters: session.doc.Output.MaxCharacters,
 			KeepWhole:     session.doc.Output.KeepWhole,
 			Colors:        session.doc.Resource(result.Resource).Colors,
-			Palette:       output.NewPalette(a.opts.Getenv, a.opts.EnvPrefix),
+			Palette:       clitable.NewPalette(a.opts.Getenv, a.opts.EnvPrefix),
 			Getenv:        a.opts.Getenv,
+			Columns:       description,
+			CellFormats:   a.opts.CellFormats,
+			Style:         session.doc.Output.TableStyle,
 		}))
 	}
 
@@ -98,6 +111,8 @@ func (a *App) render(cmd *cobra.Command, session *session, result *engine.Result
 	if err != nil {
 		return failed(err)
 	}
+	// What the joins put into the items is left out the same way.
+	items = omittedItems(session, items)
 	switch format {
 	case output.JSON:
 		return failed(output.WriteJSON(w, items))
@@ -116,6 +131,16 @@ func (a *App) render(cmd *cobra.Command, session *session, result *engine.Result
 // sortItems orders items by one of their fields. The field is named
 // without regard to case, as it is typed on a command line, and must be a
 // field of the first item.
+// omittedItems returns the items without the fields the definition leaves
+// out of everything shown, at any depth.
+func omittedItems(session *session, items []any) []any {
+	kept := make([]any, len(items))
+	for i, item := range items {
+		kept[i] = session.engine.Omitted(item)
+	}
+	return kept
+}
+
 func sortItems(items []any, field string, descending bool) ([]any, error) {
 	first, _ := items[0].(*apikit.Object)
 	index := slices.IndexFunc(first.Keys(), func(key string) bool { return strings.EqualFold(key, field) })

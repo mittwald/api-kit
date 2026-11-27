@@ -39,6 +39,13 @@ type TokenSource interface {
 	Confirmed(token string)
 }
 
+// TokenRenewer is a [TokenSource] that takes new tokens out of the
+// responses of the API. The engine calls Answered with every successful
+// response to a request that carried token, after Confirmed.
+type TokenRenewer interface {
+	Answered(token string, value any)
+}
+
 // Options configure an [Engine].
 type Options struct {
 	// Definition describes the API. It is required and must not change

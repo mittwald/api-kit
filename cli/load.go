@@ -17,7 +17,7 @@ import (
 // load reads the definition and the overlays that exist, merges and checks
 // them. Parts of overlays that were ignored are printed as warnings.
 func (a *App) load(root *cobra.Command, override bool) (*definition.Document, error) {
-	options := definition.LoadOptions{Reserved: reserved(root, a.opts.Formats)}
+	options := definition.LoadOptions{Reserved: reserved(root, a.opts.Formats, a.opts.CellFormats)}
 	if override {
 		options.Mode = definition.Override
 	}

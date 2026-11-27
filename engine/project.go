@@ -76,9 +76,18 @@ func (e *Engine) Project(ctx context.Context, resource string, items []any, o Pr
 	var lookups []lookup
 	for row, item := range items {
 		object, _ := item.(*apikit.Object)
+		// Cells are read from the item without what the definition leaves
+		// out; joins read the item itself.
+		shown, _ := e.Omitted(object).(*apikit.Object)
 		found[row] = make([]any, 0, width)
 		for _, column := range columns {
 			for _, path := range column.Paths {
+				// What the definition leaves out of everything shown is not
+				// read, under whatever label a column gives it.
+				if e.omitted(path) {
+					found[row] = append(found[row], "")
+					continue
+				}
 				var join *definition.Join
 				var rest string
 				if o.Joins {
@@ -87,12 +96,34 @@ func (e *Engine) Project(ctx context.Context, resource string, items []any, o Pr
 				if join != nil && object != nil && (o.JoinMany || !join.Many) {
 					lookups = append(lookups, lookup{row: row, slot: len(found[row]), e: e, item: object, join: join, below: rest})
 				}
-				found[row] = append(found[row], own(object, path, join != nil))
+				switch {
+				case join == nil && column.Format != "" && len(column.Paths) == 1 && object != nil:
+					// A format of the tool gets the value as the API
+					// returned it, objects, lists and nothing included.
+					// A field whose name is the whole path comes first, as
+					// for any other column.
+					value, has := shown.Get(path)
+					if !has {
+						value = at(shown, path)
+					}
+					found[row] = append(found[row], value)
+				default:
+					found[row] = append(found[row], own(shown, path, join != nil))
+				}
 			}
 		}
 	}
 	if err := e.join(ctx, lookups, found); err != nil {
 		return nil, err
+	}
+	// What the joins found may hold what the definition leaves out, before
+	// the paths of a column are merged into one cell.
+	if len(e.doc.Output.Omit) > 0 {
+		for _, cells := range found {
+			for i, cell := range cells {
+				cells[i] = e.Omitted(cell)
+			}
+		}
 	}
 
 	table := &Table{Columns: columns, Rows: make([][]any, len(items))}
@@ -116,7 +147,9 @@ func (e *Engine) Project(ctx context.Context, resource string, items []any, o Pr
 		if linked {
 			// The link comes last: its template may name what the columns
 			// have just added to the item.
-			link := e.Link(resource, object)
+			// The link names nothing the definition leaves out.
+			shown, _ := e.Omitted(object).(*apikit.Object)
+			link := e.Link(resource, shown)
 			table.Links = append(table.Links, link)
 			if object != nil {
 				complete(object, linkKey, link)
@@ -134,7 +167,17 @@ func (e *Engine) columns(resource *definition.Resource, items []any, o ProjectOp
 	var columns []definition.Column
 	taken := map[string]bool{}
 	add := func(name string) {
-		columns = append(columns, definition.Column{Label: name, Paths: []string{name}})
+		column := definition.Column{Label: name, Paths: []string{name}}
+		// A field that a column of the definition shows alone is written
+		// the way that column writes it.
+		for _, defined := range resource.Columns {
+			if slices.Equal(defined.Paths, column.Paths) {
+				column.Values, column.Format = defined.Values, defined.Format
+				column.Align, column.Style = defined.Align, defined.Style
+				break
+			}
+		}
+		columns = append(columns, column)
 		taken[name] = true
 	}
 	if o.Joins {

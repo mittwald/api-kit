@@ -154,11 +154,59 @@ func (e *Engine) join(ctx context.Context, lookups []lookup, rows [][]any) error
 // to many. Several show as a list, and so do the items of a sub-resource,
 // however many there are.
 func (r relation) find(ctx context.Context) (any, bool, error) {
+	if r.join.Exists {
+		found, err := r.exists(ctx)
+		return found, err == nil, err
+	}
+	return r.related(ctx)
+}
+
+// exists reports whether the item has a related item, whatever the join
+// would show of it.
+func (r relation) exists(ctx context.Context) (bool, error) {
+	ids := r.ids()
+	if len(ids) == 0 {
+		return false, nil
+	}
+	e, join := r.e, r.join
+	if join.By != "" {
+		listing, err := e.relatedListing(ctx, join.Resource)
+		if err != nil {
+			return false, err
+		}
+		return slices.ContainsFunc(listOf(listing), func(item any) bool {
+			object, ok := item.(*apikit.Object)
+			return ok && slices.Contains(ids, apikit.Text(at(object, join.By)))
+		}), nil
+	}
+	parent := e.doc.Resource(join.Resource).Parent
+	for _, id := range ids {
+		ref := Ref{Resource: join.Resource, ID: id}
+		if parent != "" {
+			ref = Ref{Resource: parent, ID: id, Sub: join.Resource}
+		}
+		answer, err := e.related(ctx, ref)
+		if err != nil {
+			return false, err
+		}
+		if list, ok := answer.([]any); ok && len(list) > 0 || !ok && !apikit.Falsy(answer) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// related fetches the related items and returns what the join shows of
+// them, and whether there are any.
+func (r relation) related(ctx context.Context) (any, bool, error) {
 	ids := r.ids()
 	if len(ids) == 0 {
 		return nil, false, nil
 	}
 	e, join := r.e, r.join
+	if join.By != "" {
+		return r.matched(ctx, ids)
+	}
 	// The items of a sub-resource are listed for their parent, whose ID
 	// the item then holds.
 	parent := e.doc.Resource(join.Resource).Parent
@@ -203,6 +251,39 @@ func (r relation) find(ctx context.Context) (any, bool, error) {
 	}
 	sortJoined(values, join)
 	return values, true, nil
+}
+
+// matched returns what the join shows of the items of its resource's
+// listing whose field By holds one of values.
+func (r relation) matched(ctx context.Context, values []string) (any, bool, error) {
+	e, join := r.e, r.join
+	listing, err := e.relatedListing(ctx, join.Resource)
+	if err != nil {
+		return nil, false, err
+	}
+	var shown []any
+	for _, item := range listOf(listing) {
+		object, ok := item.(*apikit.Object)
+		if !ok || !slices.Contains(values, apikit.Text(at(object, join.By))) {
+			continue
+		}
+		id, _ := e.IDOf(join.Resource, object)
+		value, err := r.shown(ctx, id, object)
+		if err != nil {
+			return nil, false, err
+		}
+		if value != nil {
+			shown = append(shown, value)
+		}
+	}
+	switch {
+	case len(shown) == 0:
+		return nil, false, nil
+	case len(shown) == 1 && !join.Many:
+		return shown[0], true, nil
+	}
+	sortJoined(shown, join)
+	return shown, true, nil
 }
 
 // ids returns the IDs of the items the join relates its item to: what the
@@ -309,6 +390,9 @@ func (r relation) shown(ctx context.Context, id string, related any) (any, error
 		}
 		break
 	}
+	if r.e.omitted(r.below) {
+		return "", nil
+	}
 	if value := at(related, r.below); value != nil {
 		return value, nil
 	}
@@ -321,20 +405,26 @@ func (r relation) shown(ctx context.Context, id string, related any) (any, error
 // by one name, so that a path such as "owner.id" works for every join.
 // What is no object shows as its text where one value is wanted.
 func (e *Engine) mapped(resource string, related any, fields []string) any {
+	// A field the definition leaves out of everything shown is not joined.
+	fields = slices.DeleteFunc(slices.Clone(fields), e.omitted)
 	object, ok := related.(*apikit.Object)
 	switch {
 	case !ok && len(fields) > 1, ok && len(fields) == 0:
 		return nil
 	case !ok:
 		return apikit.Text(related)
-	case len(fields) == 1:
-		return at(object, fields[0])
 	}
-	id, _ := e.idValue(resource, object)
+	// Nothing is taken from a field the definition leaves out, the ID
+	// included, and a field that is an object loses those fields too.
+	visible, _ := e.Omitted(object).(*apikit.Object)
+	if len(fields) == 1 {
+		return at(visible, fields[0])
+	}
+	id, _ := e.idValue(resource, visible)
 	shown := apikit.NewObject()
 	shown.Set(joinedID, id)
 	for _, field := range fields {
-		shown.Set(field, at(object, field))
+		shown.Set(field, at(visible, field))
 	}
 	return shown
 }
@@ -444,6 +534,63 @@ func (e *Engine) related(ctx context.Context, ref Ref) (any, error) {
 	return nil, nil
 }
 
+// omitted reports whether a path leads through a field the definition
+// leaves out of everything shown.
+func (e *Engine) omitted(path string) bool {
+	if len(e.doc.Output.Omit) == 0 {
+		return false
+	}
+	return slices.ContainsFunc(strings.Split(path, "."), func(part string) bool {
+		// A segment may index or filter a list, as in tokens[0].
+		name, _, _ := strings.Cut(part, "[")
+		return slices.Contains(e.doc.Output.Omit, strings.Trim(name, `"'`))
+	})
+}
+
+// Omitted returns value without the fields the definition leaves out of
+// everything shown, at any depth. Objects and lists are copied, since a
+// cached answer may be shared.
+func (e *Engine) Omitted(value any) any {
+	fields := e.doc.Output.Omit
+	if len(fields) == 0 {
+		return value
+	}
+	switch value := value.(type) {
+	case *apikit.Object:
+		if value == nil {
+			return value
+		}
+		trimmed := apikit.NewObject()
+		for key, inner := range value.All() {
+			if !slices.Contains(fields, key) {
+				trimmed.Set(key, e.Omitted(inner))
+			}
+		}
+		return trimmed
+	case []any:
+		trimmed := make([]any, len(value))
+		for i, inner := range value {
+			trimmed[i] = e.Omitted(inner)
+		}
+		return trimmed
+	}
+	return value
+}
+
+// relatedListing fetches every page of the listing a join matches items
+// in by a field. A listing the API refuses yields nothing, as a related
+// item does.
+func (e *Engine) relatedListing(ctx context.Context, resource string) (any, error) {
+	value, err := e.fetchAll(ctx, Ref{Resource: resource}, nil, e.doc.Pagination.PageSize)
+	if err == nil {
+		return value, nil
+	}
+	if _, refused := errors.AsType[*HTTPError](err); !refused && apikit.KindOf(err) != apikit.KindNotFound {
+		return nil, err
+	}
+	return nil, nil
+}
+
 // sortJoined puts the values of a join into the order the join asks for.
 // A value that is no object is sorted by itself where the join shows the
 // field that the order names.
@@ -457,8 +604,24 @@ func sortJoined(values []any, join *definition.Join) {
 		}
 		return nil
 	}
+	sortValues(values, join.Sort, key)
+}
+
+// sortItems puts the items of a listing in order: by the first column, ties
+// broken by the next ones.
+func sortItems(values []any, orders []definition.Sort) {
+	sortValues(values, orders, func(value any, column string) any {
+		if object, ok := value.(*apikit.Object); ok {
+			return at(object, column)
+		}
+		return nil
+	})
+}
+
+// sortValues orders values stably by the columns key reads from them.
+func sortValues(values []any, orders []definition.Sort, key func(value any, column string) any) {
 	slices.SortStableFunc(values, func(a, b any) int {
-		for _, order := range join.Sort {
+		for _, order := range orders {
 			result := compareSortValues(key(a, order.Column), key(b, order.Column))
 			if order.Descending {
 				result = -result

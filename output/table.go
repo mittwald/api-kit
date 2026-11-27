@@ -56,6 +56,15 @@ type TableOptions struct {
 	Getenv func(string) string
 	// Now is the time ages are counted from. Nil means time.Now.
 	Now func() time.Time
+	// Columns describe the columns of the table, in the order of its
+	// headers: the values they replace, their format, alignment and style.
+	// Nil, or a column without any, shows values as they are.
+	Columns []definition.Column
+	// CellFormats are the formats of the tool that columns name.
+	CellFormats map[string]func(value any) string
+	// Style is the cli-kit table style a drawn table takes. Empty means
+	// the plain columns.
+	Style string
 }
 
 // WriteTable writes a table. Columns that hold objects, or lists of
@@ -66,7 +75,7 @@ func WriteTable(w io.Writer, t Table, o TableOptions) error {
 		o.Now = time.Now
 	}
 	human := o.Format == Text || o.Format == Wide
-	columns := simpleColumns(t)
+	columns := o.simpleColumns(t)
 
 	headers := make([]string, len(columns))
 	for i, column := range columns {
@@ -87,28 +96,30 @@ func WriteTable(w io.Writer, t Table, o TableOptions) error {
 		look := theme.Active()
 		look.Header = o.Palette.Header
 		options = append(options, table.WithTheme(look))
-	}
-	out := table.New(w, headers, options...)
-
-	// Columns without color rules are painted in turn with the colors of
-	// the palette.
-	steps := make([][]painter, len(columns))
-	fallback := make([]theme.Style, len(columns))
-	if human && o.Color {
-		next := 0
-		for i, header := range headers {
-			steps[i] = painters(o.Colors, header, o.Getenv)
-			if len(steps[i]) == 0 && len(o.Palette.Columns) > 0 {
-				fallback[i] = o.Palette.Columns[next%len(o.Palette.Columns)]
-				next++
-			}
+		if style, ok := table.LookupStyle(o.Style); ok && o.Style != "" {
+			options = append(options, table.WithStyle(style))
 		}
 	}
+	aligns := make([]table.Align, len(columns))
+	for i, column := range columns {
+		switch o.column(column).Align {
+		case definition.AlignRight:
+			aligns[i] = table.AlignRight
+		case definition.AlignCenter:
+			aligns[i] = table.AlignCenter
+		}
+	}
+	options = append(options, table.WithAlignment(aligns...))
+	if human && o.Color {
+		options = append(options, table.WithColumnStyles(o.columnStyles(columns, headers)...))
+	}
+	out := table.New(w, headers, options...)
 
 	for rowIndex, row := range t.Rows {
 		cells := make([]string, len(columns))
 		for i, column := range columns {
-			cell := cellText(row[column])
+			described := o.column(column)
+			cell, formatted := o.formatted(described, row[column])
 			if !human {
 				cells[i] = cell
 				continue
@@ -118,14 +129,13 @@ func WriteTable(w io.Writer, t Table, o TableOptions) error {
 			// in a value does not reach the terminal, where it could clear
 			// the screen or write to the clipboard. Records are plain text
 			// already.
-			cell, painted := o.humanize(term.Plain(cell))
-			if o.Color {
-				switch {
-				case len(steps[i]) > 0:
-					cell = paint(cell, steps[i])
-				case !painted:
-					cell = fallback[i].Paint(cell)
-				}
+			cell = term.Plain(cell)
+			if formatted {
+				// A formatted value is what the definition wants shown: it
+				// is not read as a time, only shortened.
+				cell = o.shortened(cell)
+			} else {
+				cell = o.humanize(cell)
 			}
 			if i == 0 && o.Links && rowIndex < len(t.Links) && cell != "" {
 				cell = term.Hyperlink(t.Links[rowIndex], cell)
@@ -137,11 +147,43 @@ func WriteTable(w io.Writer, t Table, o TableOptions) error {
 	return out.Render()
 }
 
+// columnStyles returns how the columns of a painted table are painted: in
+// the style of the definition, else with its color rules, else in the
+// next color of the palette, which leaves a cell painted already, such as
+// an age, as it is.
+func (o TableOptions) columnStyles(columns []int, headers []string) []table.ColumnStyle {
+	styles := make([]table.ColumnStyle, len(columns))
+	next := 0
+	for i, header := range headers {
+		steps := rules(o.Colors, header, o.Getenv)
+		var fallback theme.Style
+		if len(steps) == 0 && len(o.Palette.Columns) > 0 {
+			fallback = o.Palette.Columns[next%len(o.Palette.Columns)]
+			next++
+		}
+		switch o.column(columns[i]).Style {
+		case definition.StyleBold:
+			styles[i] = table.ColumnStyle{Style: theme.Bold}
+		case definition.StyleItalic:
+			styles[i] = table.ColumnStyle{Style: theme.Italic}
+		default:
+			styles[i] = table.ColumnStyle{Style: fallback, Rules: steps}
+		}
+	}
+	return styles
+}
+
 // simpleColumns returns the indexes of the columns a table can show: those
-// in which no cell is an object or a list that holds objects or lists.
-func simpleColumns(t Table) []int {
+// with a format, and those in which no cell is an object or a list that
+// holds objects or lists.
+func (o TableOptions) simpleColumns(t Table) []int {
 	var columns []int
 	for column := range t.Headers {
+		// A format of the tool writes whatever the column holds.
+		if format := o.column(column).Format; format != "" && o.CellFormats[format] != nil {
+			columns = append(columns, column)
+			continue
+		}
 		nested := slices.ContainsFunc(t.Rows, func(row []any) bool {
 			switch cell := row[column].(type) {
 			case *apikit.Object:
@@ -164,6 +206,33 @@ func simpleColumns(t Table) []int {
 	return columns
 }
 
+// column returns the description of the column at index i of the table,
+// the zero Column when there is none.
+func (o TableOptions) column(i int) definition.Column {
+	if i < len(o.Columns) {
+		return o.Columns[i]
+	}
+	return definition.Column{}
+}
+
+// formatted returns the text of a cell of column: the text its Values give
+// the value, or what its format writes, or the value as it is. It reports
+// whether the column changed the value.
+func (o TableOptions) formatted(column definition.Column, value any) (string, bool) {
+	if len(column.Values) > 0 {
+		text := cellText(value)
+		for _, pair := range column.Values {
+			if pair.Key == text {
+				return pair.Value, true
+			}
+		}
+	}
+	if format, ok := o.CellFormats[column.Format]; ok && column.Format != "" {
+		return format(value), true
+	}
+	return cellText(value), false
+}
+
 // cellText returns a value as the text of a cell. The items of a list are
 // joined with commas, leaving out those that are nothing.
 func cellText(value any) string {
@@ -181,28 +250,35 @@ func cellText(value any) string {
 }
 
 // humanize prepares the text of a cell for a person: a point in time
-// becomes an age, a long value is shortened. It reports whether the result
-// is painted already.
-func (o TableOptions) humanize(cell string) (string, bool) {
-	if at, ok := parseTimestamp(cell); ok {
+// becomes an age, painted in the colors of the palette for ages, and a
+// long value is shortened.
+func (o TableOptions) humanize(cell string) string {
+	if at, ok := format.ParseTimestamp(cell); ok {
 		now := o.Now()
-		age := Age(at, now)
+		age := format.Ago(at, now)
 		if !o.Color {
-			return age, false
+			return age
 		}
 		if distance := now.Sub(at); distance.Abs() < time.Hour {
-			return o.Palette.FreshAge.Paint(age), true
+			return o.Palette.FreshAge.Paint(age)
 		}
-		return o.Palette.Age.Paint(age), true
+		return o.Palette.Age.Paint(age)
 	}
+	return o.shortened(cell)
+}
+
+// shortened cuts a long value of a cell to the most characters a cell may
+// have, unless the table shows whole values or the value is one to keep
+// whole.
+func (o TableOptions) shortened(cell string) string {
 	// A shortened value stays on one line, so a value is measured as that
 	// line, in the cells a terminal gives it: a wide character takes two.
 	line := strings.ReplaceAll(cell, "\n", " ")
 	if !o.Ellipsis || o.MaxCharacters <= 0 || term.VisibleWidth(line) <= o.MaxCharacters {
-		return cell, false
+		return cell
 	}
 	if slices.ContainsFunc(o.KeepWhole, func(pattern *regexp.Regexp) bool { return pattern.MatchString(cell) }) {
-		return cell, false
+		return cell
 	}
-	return term.Truncate(line, o.MaxCharacters), false
+	return term.Truncate(line, o.MaxCharacters)
 }

@@ -96,6 +96,19 @@ type Options struct {
 	// line for each mistake, which is printed as a warning; the call is
 	// sent all the same. A parameter may name only a format that is here.
 	Formats map[string]func(value string) []string
+	// CallResults show the result of a call in place of what the tool
+	// shows itself, by the call's name and its resource, as in
+	// "add orders". The function runs after the call succeeded and writes
+	// what it wants to the streams of cmd; its Env gives it the engine to
+	// fetch more with and the renderer of --output. A dry run, and a call
+	// that failed, are shown as usual.
+	CallResults map[string]func(env *Env, cmd *cobra.Command, result *engine.CallResult) error
+	// CellFormats write the values of a column of a table, by the name of
+	// the format a column of the definition gives. A format gets the value
+	// as the API returned it, a string, a json.Number, a bool, nil or a
+	// list or object, and returns the text of the cell. A column may name
+	// only a format that is here.
+	CellFormats map[string]func(value any) string
 	// CompletionInstall gives the bash, zsh and fish commands of
 	// "completion" an --install flag, which writes the script to the
 	// directory of the current user that the shell loads completion scripts

@@ -443,6 +443,8 @@ func TestDocumentProblems(t *testing.T) {
 			[]string{"resources.pets.joins[0].column: a list of fields needs 'conditions'"}},
 		{"join sorted in an unknown direction", environments + "resources:\n  pets: {joins: [{name: owner, column: ownerId, resource: owners, join: name, sort: [{column: name, direction: up}]}]}\n",
 			[]string{`resources.pets.joins[0].sort[0].direction: must be asc or desc, not "up"`}},
+		{"existence join of many", environments + "resources:\n  pets: {joins: [{name: toys, column: id, by: petId, resource: owners, many: true, exists: true}]}\n",
+			[]string{"resources.pets.joins[0].exists: is one value, true or false, for any number of related items; leave out 'many'"}},
 		{"nested join with a mistake", environments + "resources:\n  pets: {joins: [{name: owner, column: ownerId, resource: owners, join: name, nested: [{name: region, column: regionId, join: id}]}]}\n",
 			[]string{"resources.pets.joins[0].nested[0].resource: is required"}},
 		{"link template without a URL", environments + "resources:\n  pets: {urlTemplate: {query: {id: \"${id}\"}}}\n",

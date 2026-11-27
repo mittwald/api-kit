@@ -184,6 +184,7 @@ func (r *callRun) apply(ctx context.Context, in CallInput) (*CallResult, error) 
 	if err != nil {
 		return nil, err
 	}
+	applyDefaults(call, r.args)
 	if err := checkArguments(call, selected, r.args); err != nil {
 		return nil, err
 	}
@@ -238,7 +239,7 @@ func (r *callRun) apply(ctx context.Context, in CallInput) (*CallResult, error) 
 		result.Resource = did.resource
 		// An answer that says nothing, such as an empty object, is not
 		// shown; the message is.
-		if len(selected) == 1 && !apikit.Falsy(did.body) {
+		if len(selected) == 1 && !apikit.Falsy(did.body) && !setter.HideResponse {
 			result.Body = did.body
 		} else {
 			result.Messages = append(result.Messages, did.message)
@@ -356,10 +357,16 @@ func (r *callRun) runSetter(ctx context.Context, setter *definition.Setter) (sen
 		}
 		return sent{}, err
 	}
-	did := sent{resource: setter.Resource, body: answer, message: r.message(setter, vals, used, body)}
+	did := sent{resource: setter.Resource, message: r.message(setter, vals, used, body)}
 	if did.resource == "" {
 		did.resource = r.resource
 	}
+	field := setter.ResponseField
+	if field == "" {
+		field = r.e.doc.Resource(did.resource).ResponseField
+	}
+	answer = unwrap(answer, field)
+	did.body = answer
 	if len(setter.Then) > 0 {
 		if err := r.thenSteps(ctx, setter, vals, did.resource, answer); err != nil {
 			return sent{}, err

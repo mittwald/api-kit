@@ -215,6 +215,9 @@ func (e *Engine) exchange(ctx context.Context, c call) (answer, error) {
 	}
 	if own && result.ok() {
 		e.tokens.Confirmed(token)
+		if renewer, ok := e.tokens.(TokenRenewer); ok && result.value != nil {
+			renewer.Answered(token, result.value)
+		}
 	}
 	return result, nil
 }

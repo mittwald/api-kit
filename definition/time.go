@@ -118,3 +118,73 @@ func timeMistake(text string) error {
 	return fmt.Errorf("%q is no time: give an ISO 8601 time such as 2006-01-02T15:04, "+
 		"or now, today, tomorrow or +N with m, h, d or w, optionally followed by a time of day such as 08:00", text)
 }
+
+// ParseTime reads a value given for a parameter of type time, relative to
+// now: a preset, a time in one of the parameter's layouts, or one that
+// [ParseTime] reads, in the time zone of now. A date written without a time
+// of day stands for the parameter's DayTime on that day, or now when the
+// day is today.
+func (p *Parameter) ParseTime(text string, now time.Time) (time.Time, error) {
+	text = strings.TrimSpace(text)
+	for _, preset := range p.Presets {
+		if preset.Key == text {
+			text = preset.Value
+			break
+		}
+	}
+	for _, layout := range p.Layouts {
+		if parsed, err := time.ParseInLocation(layout, text, now.Location()); err == nil {
+			// A layout may carry a zone of its own; the time is one of the
+			// parameter's zone all the same.
+			parsed = parsed.In(now.Location())
+			if !hasClock(layout) {
+				return p.onDay(parsed, now), nil
+			}
+			return parsed, nil
+		}
+	}
+	parsed, err := ParseTime(text, now)
+	if err != nil {
+		return parsed, err
+	}
+	if p.DayTime != "" && dayOnly(text, now) {
+		return p.onDay(parsed, now), nil
+	}
+	return parsed, nil
+}
+
+// dayOnly reports whether text names a day without a time of day: an ISO
+// 8601 date, today, tomorrow, or a number of days or weeks from now.
+func dayOnly(text string, now time.Time) bool {
+	if _, err := time.ParseInLocation(time.DateOnly, text, now.Location()); err == nil {
+		return true
+	}
+	switch text {
+	case "today", "tomorrow":
+		return true
+	}
+	match := relativeTime.FindStringSubmatch(text)
+	return match != nil && (match[2] == "d" || match[2] == "w")
+}
+
+// hasClock reports whether a layout writes a time of day: a time with a
+// clock reads differently in it than midnight of the same day.
+func hasClock(layout string) bool {
+	day := time.Date(2001, time.February, 3, 0, 0, 0, 0, time.UTC)
+	return day.Format(layout) != day.Add(13*time.Hour+14*time.Minute+15*time.Second).Format(layout)
+}
+
+// onDay returns the time a date without a time of day stands for: the
+// DayTime of the parameter on that day, or now when the day is today.
+func (p *Parameter) onDay(day, now time.Time) time.Time {
+	match := clockTime.FindStringSubmatch(p.DayTime)
+	if match == nil {
+		return day
+	}
+	if day.Year() == now.Year() && day.YearDay() == now.YearDay() {
+		return now
+	}
+	hour, _ := strconv.Atoi(match[1])
+	minute, _ := strconv.Atoi(match[2])
+	return time.Date(day.Year(), day.Month(), day.Day(), hour, minute, 0, 0, day.Location())
+}

@@ -137,8 +137,15 @@ func (a *App) callLeaf(doc *definition.Document, call *definition.Call, use stri
 		// names what is missing.
 		Args: cobra.MaximumNArgs(1),
 	}
-	if call.RequiresID {
+	positional := call.Positional()
+	switch {
+	case call.RequiresID:
 		command.Use += " ID"
+	case positional != nil && positional.TakesList():
+		command.Use += " [" + strings.ToUpper(positional.Name) + "...]"
+		command.Args = cobra.ArbitraryArgs
+	case positional != nil:
+		command.Use += " " + strings.ToUpper(positional.Name)
 	}
 
 	flags := command.Flags()
@@ -149,7 +156,12 @@ func (a *App) callLeaf(doc *definition.Document, call *definition.Call, use stri
 		if parameter.Type == definition.TypeTime {
 			help = strings.TrimSpace(help + " " + timeHelp(parameter))
 		}
-		if parameter.Required && !call.Shared() {
+		switch {
+		case parameter.Positional && parameter.Required && !call.Shared():
+			help = strings.TrimSpace(help + " (required; or as the argument)")
+		case parameter.Positional:
+			help = strings.TrimSpace(help + " (or as the argument)")
+		case parameter.Required && !call.Shared():
 			help = strings.TrimSpace(help + " (required)")
 		}
 		names := []string{parameter.Name}
@@ -233,13 +245,31 @@ func (a *App) callLeaf(doc *definition.Document, call *definition.Call, use stri
 			return err
 		}
 		input := engine.CallInput{Resource: call.Resource, Call: call.Name, Params: map[string]any{}, Templates: map[string]engine.Text{}}
-		if len(args) > 0 {
+		switch {
+		case positional != nil && len(args) > 0:
+			// The arguments are the values of the option, which says what
+			// is wrong with them.
+			if cmd.Flags().Changed(positional.Name) {
+				return apikit.Errorf(apikit.KindUsage, "%s is given as the argument, so --%s cannot be given as well", positional.Name, positional.Name)
+			}
+			for _, arg := range args {
+				if err := cmd.Flags().Set(positional.Name, arg); err != nil {
+					return apikit.Errorf(apikit.KindUsage, "invalid argument %q for %s: %v", arg, positional.Name, err)
+				}
+			}
+		case len(args) > 0:
 			input.ID = args[0]
 		}
 		if err := a.fillCall(cmd, session, call, options, &input); err != nil {
 			return err
 		}
 		result, err := session.engine.Apply(cmd.Context(), input)
+		if show := a.opts.CallResults[call.Name+" "+call.Resource]; show != nil && err == nil && result != nil && result.DryRun == nil {
+			for _, warning := range result.Warnings {
+				writeLine(a.errs, "WARNING: "+warning)
+			}
+			return failed(show(&Env{app: a, doc: doc}, cmd, result))
+		}
 		// What was done before a failure is still reported.
 		if shown := a.showCall(cmd, session, call, result, spec); shown != nil && err == nil {
 			err = shown
@@ -488,6 +518,15 @@ func timeHelp(parameter *definition.Parameter) string {
 			names = append(names, preset.Key)
 		}
 		help += "; or one of " + strings.Join(names, ", ")
+	}
+	if len(parameter.Layouts) > 0 {
+		help += "; or written as " + strings.Join(parameter.Layouts, ", ") + ", as Go writes times"
+	}
+	if parameter.DayTime != "" {
+		help += "; a date alone is " + parameter.DayTime + ", or now when it is today"
+	}
+	if text, ok := parameter.Default.(string); ok && text != "" {
+		help += "; default: " + text
 	}
 	if parameter.Timezone != "" {
 		help += "; in " + parameter.Timezone

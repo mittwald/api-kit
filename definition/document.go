@@ -177,6 +177,12 @@ type Output struct {
 	NameFields []string
 	// KeepWhole match cell values that are never cut, such as IDs.
 	KeepWhole []*regexp.Regexp
+	// Omit are fields left out of every item shown, in every format, such
+	// as a token the API sends along with its answers.
+	Omit []string
+	// TableStyle is the style a table is drawn in, one of cli-kit's table
+	// styles such as "fancy". Empty means the plain columns.
+	TableStyle string
 }
 
 // Resource describes one kind of item of the API.
@@ -222,6 +228,25 @@ type Resource struct {
 	IDSearch []IDSearch
 	// Setters are the requests that change the resource.
 	Setters []*Setter
+	// ResponseField is the field of a response that holds the items of a
+	// listing, or the item, for an API that wraps them in an object. A
+	// response without it is taken as it is.
+	ResponseField string
+	// Query are query parameters every listing of the resource is sent
+	// with, in document order. A filter of the same key replaces one.
+	Query []Pair
+	// Sort orders a listing once it is fetched, for an API that does not
+	// order it itself; the first column decides, the next ones break ties.
+	// A listing that is sorted or numbered is always fetched whole.
+	Sort []Sort
+	// Include add fields of what other resources answer to what this one
+	// answers, for an API that spreads one view over several requests.
+	Include []Include
+	// Number is a field set on every item of a listing to its place in it,
+	// counted from 1 after Sort, as a number. It lets the parameter of a
+	// call name an item by its number, with a lookup that matches the
+	// field.
+	Number string
 
 	defined bool
 }
@@ -229,6 +254,17 @@ type Resource struct {
 // Defined reports whether the definition describes the resource. A resource
 // it does not describe can still be fetched by name, with defaults.
 func (r *Resource) Defined() bool { return r.defined }
+
+// Include adds fields of what another resource answers, when it is asked
+// for without an ID, to every item of a resource.
+type Include struct {
+	// Resource is the resource to ask.
+	Resource string
+	// Fields are the fields to add, each named as it is added, with the
+	// path in the answer it is taken from, in document order. A field the
+	// answer does not have is left out.
+	Fields []Pair
+}
 
 // Header is a request header whose value comes from a sub-resource.
 type Header struct {
@@ -271,7 +307,33 @@ type Column struct {
 	Label string
 	// Paths lead to the values shown; several are merged into one cell.
 	Paths []string
+	// Values replace a value of the column, written as its text, with the
+	// text to show, such as a symbol for a kind of item.
+	Values []Pair
+	// Format names a format of the tool that writes the values of the
+	// column, such as an amount of money. It comes after Values, which a
+	// value it holds skips.
+	Format string
+	// Align is how the cells sit in the column: [AlignLeft], [AlignRight]
+	// or [AlignCenter].
+	Align string
+	// Style is how a drawn table paints the cells: [StyleBold] or
+	// [StyleItalic]. Empty means the colors of the table.
+	Style string
 }
+
+// The alignments of a column.
+const (
+	AlignLeft   = "left"
+	AlignRight  = "right"
+	AlignCenter = "center"
+)
+
+// The styles of a column.
+const (
+	StyleBold   = "bold"
+	StyleItalic = "italic"
+)
 
 // ColorSet paints the cells of some columns.
 type ColorSet struct {
@@ -321,6 +383,15 @@ type Join struct {
 	Sort []Sort
 	// Nested are joins from the related items onward.
 	Nested []*Join
+	// By is the field of a related item that holds what Column leads to,
+	// for related items that cannot be fetched by their ID: the listing of
+	// Resource is fetched once, and its items whose By equals the value of
+	// Column are the related ones.
+	By string
+	// Exists shows whether the item has a related item at all, true or
+	// false, in place of what the related items hold. It is one value, so
+	// such a join is never Many.
+	Exists bool
 }
 
 // Pair is a key with a value, kept in document order.
@@ -379,6 +450,10 @@ type Setter struct {
 	API string
 	// Resource describes the response, when it is not the resource itself.
 	Resource string
+	// ResponseField is the field of the response that holds the item, when
+	// the API wraps it in an object. It defaults to that of the resource
+	// the response is described by.
+	ResponseField string
 	// RequiresID is false for a setter that works without the ID of an
 	// existing item, such as one that creates an item.
 	RequiresID bool
@@ -390,6 +465,10 @@ type Setter struct {
 	PayloadTemplate any
 	// Message is the template of the line printed on success.
 	Message string
+	// HideResponse is set for a setter whose answer is not worth showing,
+	// such as what is left of an item it removed: its message is shown in
+	// place of the answer.
+	HideResponse bool
 	// Token is the template of the token to send the request with, in
 	// place of the caller's own.
 	Token string
@@ -467,8 +546,9 @@ type Parameter struct {
 	// Resource makes the value the ID of an item of a resource; a name or
 	// alias is resolved first.
 	Resource *ParameterResource
-	// Default is the value of a step parameter that was not given: a
-	// string or a [json.Number].
+	// Default is the value of a step parameter, or of a parameter that is
+	// not required, that was not given: a string or a [json.Number]. That of
+	// a parameter of type time is written like a value given for it.
 	Default any
 	// Variables are template variables the parameter sets when it is
 	// given, in document order.
@@ -492,10 +572,28 @@ type Parameter struct {
 	// Presets are names a parameter of type time takes in place of a time,
 	// each with the time it stands for, in document order.
 	Presets []Pair
+	// Layouts are further ways a parameter of type time may be written, as
+	// Go time layouts in the time zone of the parameter, such as
+	// "02.01.2006" for a German date.
+	Layouts []string
+	// SendLayout is the Go time layout a parameter of type time is sent
+	// in, in its time zone, for an API that does not take RFC 3339. Empty
+	// means RFC 3339.
+	SendLayout string
+	// DayTime is the time of day, as in 12:00, that a date written without
+	// one stands for, for a parameter of type time. A date that is today
+	// stands for now instead, so that it is never in the past. Empty means
+	// midnight.
+	DayTime string
 	// Format names a check of the tool for the value of a parameter of
 	// type str, such as one of its markup. The tool says what the value
 	// gets wrong; the call is sent all the same.
 	Format string
+	// Positional lets the value be given as the argument of the command,
+	// in place of the option: one argument, or every argument for a
+	// parameter that takes a list. A call has at most one such parameter,
+	// and none when it takes the ID of an item.
+	Positional bool
 
 	path string
 	raw  *apikit.Object

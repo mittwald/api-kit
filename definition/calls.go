@@ -31,6 +31,17 @@ type Call struct {
 	OneOf [][]string
 }
 
+// Positional returns the parameter given as the argument of the command,
+// nil for none.
+func (c *Call) Positional() *Parameter {
+	for _, parameter := range c.Parameters {
+		if parameter.Positional {
+			return parameter
+		}
+	}
+	return nil
+}
+
 // Shared reports whether the call has several setters.
 func (c *Call) Shared() bool { return len(c.Setters) > 1 }
 
