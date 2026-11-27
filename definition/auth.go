@@ -129,6 +129,11 @@ type TokenValidation struct {
 	// status in neither list proves nothing: the token is neither used nor
 	// given up.
 	Invalid []int
+	// ValidField, when set, is the field of a response with a valid status
+	// that says whether the token is good, for APIs that answer 200 either
+	// way: true proves it good, false proves it bad, and anything else
+	// proves nothing.
+	ValidField *expr.Path
 }
 
 // SessionRefresh renews a session. The request carries the old token in the
@@ -283,6 +288,13 @@ func (l *loader) auth(m mapping, doc *Document) {
 			Request: l.authRequest(validate, doc, requestSent, VariableToken),
 			Valid:   validate.integers("valid", []int{200, 204}),
 			Invalid: validate.integers("invalid", []int{401}),
+		}
+		if field := validate.text("validField", ""); field != "" {
+			if parsed, err := expr.ParsePath(field); err != nil {
+				l.problemf(validate.at("validField"), "%v", err)
+			} else {
+				validation.ValidField = &parsed
+			}
 		}
 		for i, status := range validation.Invalid {
 			if slices.Contains(validation.Valid, status) {

@@ -11,6 +11,7 @@ import (
 	apikit "github.com/mittwald/api-kit"
 	"github.com/mittwald/api-kit/auth"
 	"github.com/mittwald/api-kit/definition"
+	"github.com/mittwald/api-kit/expr"
 )
 
 func TestNewChecksItsOptions(t *testing.T) {
@@ -248,6 +249,47 @@ func TestValidationVerdicts(t *testing.T) {
 			if got := f.api.sent(checkRoute); !slices.Equal(got, []call{want}) {
 				t.Errorf("validation requests = %+v, want %+v", got, want)
 			}
+		})
+	}
+}
+
+// TestValidField covers an API that answers 200 either way and says in
+// the body whether the token is good.
+func TestValidField(t *testing.T) {
+	field, err := expr.ParsePath("verified")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name         string
+		answer       reply
+		valid        bool
+		inconclusive bool
+	}{
+		{"true proves the token good", reply{status: 200, body: `{"verified":true}`}, true, false},
+		{"false proves the token bad", reply{status: 200, body: `{"verified":false}`}, false, false},
+		{"no field proves nothing", reply{status: 200, body: `{}`}, false, true},
+		{"no boolean proves nothing", reply{status: 200, body: `{"verified":"yes"}`}, false, true},
+		{"no JSON proves nothing", reply{status: 200, body: `ok`}, false, true},
+		{"the statuses still count", reply{status: 401, body: `{"verified":true}`}, false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.options.Explicit = "given-token"
+			validation := *f.options.Config.Validate
+			validation.ValidField = &field
+			f.options.Config.Validate = &validation
+			f.api.on(checkRoute, func(call) reply { return tt.answer })
+
+			token, _, err := f.manager().Resolve(context.Background(), true)
+			if tt.valid {
+				if err != nil || token != "given-token" {
+					t.Errorf("Resolve() = %q, %v", token, err)
+				}
+				return
+			}
+			wantUnauthenticated(t, err, !tt.inconclusive, tt.inconclusive, false)
 		})
 	}
 }

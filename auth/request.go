@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"slices"
@@ -122,17 +123,35 @@ func (m *Manager) validate(ctx context.Context, token string) verdict {
 	if validation == nil {
 		return verdictNone
 	}
-	status, _, err := m.send(ctx, validation.Request, map[string]string{definition.VariableToken: token}, token)
+	status, body, err := m.send(ctx, validation.Request, map[string]string{definition.VariableToken: token}, token)
 	switch {
 	case err != nil:
 		m.o.Log.Warn("cannot validate the token", "error", err)
 		return verdictUnknown
+	case slices.Contains(validation.Valid, status) && validation.ValidField != nil:
+		return validField(*validation.ValidField, body, m.o.Log)
 	case slices.Contains(validation.Valid, status):
 		return verdictValid
 	case slices.Contains(validation.Invalid, status):
 		return verdictInvalid
 	}
 	m.o.Log.Debug("the validation proves nothing about the token", "status", status)
+	return verdictUnknown
+}
+
+// validField reads the verdict out of the field of a validation response
+// that says whether the token is good.
+func validField(field expr.Path, body []byte, log *slog.Logger) verdict {
+	value, err := apikit.Unmarshal(body)
+	if object, ok := value.(*apikit.Object); ok && err == nil {
+		if good, ok := field.Get(object, "").(bool); ok {
+			if good {
+				return verdictValid
+			}
+			return verdictInvalid
+		}
+	}
+	log.Debug("the validation proves nothing about the token", "field", field.String())
 	return verdictUnknown
 }
 
